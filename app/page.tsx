@@ -1,0 +1,1119 @@
+"use client";
+
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Download, Edit3, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload } from "lucide-react";
+import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
+
+const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "MARCOS CLOSET", "QUINCALLERIA", "ADICIONAL", "POST VENTA"];
+const APP_TIME_ZONE = "America/Santiago";
+const APP_TODAY = "2026-04-27";
+
+type TaskDraft = {
+  project: string;
+  type: string;
+  detail: string;
+  units: string;
+  scheduledAt: string;
+};
+
+type BulkDraft = {
+  state: DispatchState;
+  actualAt: string;
+  notes: string;
+};
+
+type Session = {
+  email: string;
+  role: Role;
+  name: string;
+};
+
+const emptyTask = (): TaskDraft => ({
+  project: "",
+  type: "COCINA",
+  detail: "",
+  units: "0",
+  scheduledAt: todayOnly()
+});
+
+function todayOnly() {
+  if (APP_TODAY) return APP_TODAY;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return `${year}-${month}-${day}`;
+}
+
+function dateOnly(value?: string | null) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return `${year}-${month}-${day}`;
+}
+
+function shortDate(value?: string | null) {
+  if (!value) return "-";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00Z`) : new Date(value);
+  return new Intl.DateTimeFormat("es-CL", { day: "numeric", month: "short", timeZone: APP_TIME_ZONE }).format(date);
+}
+
+function ymdToUtc(dateOnlyValue: string) {
+  const [year, month, day] = dateOnlyValue.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 12));
+}
+
+function utcToYmd(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function isBusinessDay(date: Date) {
+  const day = date.getUTCDay();
+  return day !== 0 && day !== 6;
+}
+
+function addBusinessDays(dateOnlyValue: string, days: number) {
+  const date = ymdToUtc(dateOnlyValue);
+  const direction = days >= 0 ? 1 : -1;
+  let remaining = Math.abs(days);
+  while (remaining > 0) {
+    date.setUTCDate(date.getUTCDate() + direction);
+    if (isBusinessDay(date)) remaining--;
+  }
+  return utcToYmd(date);
+}
+
+function businessDiffDays(scheduled: string, actual?: string | null) {
+  if (!actual) return null;
+  const start = ymdToUtc(dateOnly(scheduled));
+  const end = ymdToUtc(dateOnly(actual));
+  if (start.getTime() === end.getTime()) return 0;
+  const direction = end > start ? 1 : -1;
+  const cursor = new Date(start);
+  let count = 0;
+  while ((direction > 0 && cursor < end) || (direction < 0 && cursor > end)) {
+    cursor.setUTCDate(cursor.getUTCDate() + direction);
+    if (isBusinessDay(cursor)) count += direction;
+  }
+  return count;
+}
+
+function timeState(row: DispatchRow) {
+  const state = row.status?.state ?? "pendiente";
+  const target = state === "despachado" ? row.status?.actualAt : todayOnly();
+  const diff = businessDiffDays(row.scheduledAt, target);
+  if (diff === null) return { label: "-", tone: "text-[var(--mut)]", value: 0 };
+  if (state === "despachado") {
+    if (diff === 0) return { label: "En fecha", tone: "text-[var(--mut)]", value: diff };
+    if (diff > 0) return { label: `${diff}d atraso`, tone: "text-[var(--bad)]", value: diff };
+    return { label: `${Math.abs(diff)}d adelanto`, tone: "text-[var(--ok)]", value: diff };
+  }
+  if (diff > 0) return { label: `${diff}d atrasado`, tone: "text-[var(--bad)]", value: diff };
+  if (diff === 0) return { label: "Hoy", tone: "text-[var(--warn)]", value: diff };
+  return { label: `${Math.abs(diff)}d restantes`, tone: "text-[var(--mut)]", value: diff };
+}
+
+function taskPriority(row: DispatchRow) {
+  const state = row.status?.state ?? "pendiente";
+  const time = timeState(row);
+  if (state !== "despachado" && time.value > 0) return 0; // atrasado pendiente
+  if (state === "despachado" && time.value > 0) return 1; // despachado con atraso, ya no es urgencia pero si castigo
+  if (state !== "despachado" && time.value >= -7) return 2; // proximos despachos a cumplir
+  if (state !== "despachado") return 3; // pendiente futuro
+  if (time.value < 0) return 4; // despachado adelantado
+  if (time.value === 0) return 5; // entregado on time
+  return 6;
+}
+
+function typeClass(type: string) {
+  if (type === "COCINA") return "bg-[var(--org)]";
+  if (type === "CLOSET") return "bg-[var(--blk)]";
+  if (type === "BAÑO") return "bg-[#5a5a5a]";
+  if (type === "MARCOS CLOSET") return "bg-[#7b5ea7]";
+  if (type === "QUINCALLERIA") return "bg-[#2e86ab]";
+  if (type === "ADICIONAL") return "bg-[#e9a825]";
+  return "bg-[var(--g3)]";
+}
+
+function statusClass(state: DispatchState) {
+  if (state === "despachado") return "status-despachado";
+  if (state === "cambio") return "status-cambio";
+  return "status-pendiente";
+}
+
+function toTaskDraft(row: DispatchRow): TaskDraft {
+  return {
+    project: row.project,
+    type: row.type,
+    detail: row.detail ?? "",
+    units: String(row.units ?? 0),
+    scheduledAt: dateOnly(row.scheduledAt)
+  };
+}
+
+function normalizeProjectName(value: string) {
+  const clean = value.trim().replace(/\s+/g, " ");
+  const upper = clean.toUpperCase();
+  if (upper === "LOS SAUCES" || upper === "EL SAUCE") return "EL SAUCE";
+  return upper;
+}
+
+export default function Home() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [programs, setPrograms] = useState<ProgramSummary[]>([]);
+  const [programId, setProgramId] = useState("");
+  const [payload, setPayload] = useState<DashboardPayload | null>(null);
+  const [typeFilter, setTypeFilter] = useState("todos");
+  const [stateFilter, setStateFilter] = useState<DispatchState | "todos">("todos");
+  const [projectFilter, setProjectFilter] = useState("todos");
+  const [timeFilter, setTimeFilter] = useState<"todos" | "atrasadas" | "hoy" | "proximas">("todos");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<DispatchRow | null>(null);
+  const [taskModal, setTaskModal] = useState<{ mode: "create" | "edit"; row?: DispatchRow } | null>(null);
+  const [checked, setChecked] = useState<string[]>([]);
+  const [collapsedProjects, setCollapsedProjects] = useState<string[]>([]);
+  const [projectSort, setProjectSort] = useState<"prioridad" | "atraso" | "cumplimiento" | "nombre">("prioridad");
+  const [timelineOffset, setTimelineOffset] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem("formatto-session");
+    if (raw) setSession(JSON.parse(raw));
+  }, []);
+
+  const role = session?.role ?? "lector";
+  const headers = useMemo(() => ({ "Content-Type": "application/json", "x-formatto-role": role }), [role]);
+
+  const loadPrograms = useCallback(async () => {
+    const res = await fetch("/api/programs", { headers });
+    const data = await res.json();
+    const list = data.programs ?? [];
+    setPrograms(list);
+    const active =
+      list.find((p: ProgramSummary) => p.active && (p._count?.dispatches ?? 0) > 0) ??
+      [...list].sort((a: ProgramSummary, b: ProgramSummary) => (b._count?.dispatches ?? 0) - (a._count?.dispatches ?? 0))[0];
+    if (active && !programId) setProgramId(active.id);
+  }, [headers, programId]);
+
+  const loadDashboard = useCallback(async (id = programId) => {
+    const suffix = id ? `?programId=${id}` : "";
+    const res = await fetch(`/api/dashboard${suffix}`, { headers });
+    setPayload(await res.json());
+  }, [headers, programId]);
+
+  useEffect(() => {
+    loadPrograms().catch(() => setMessage("No se pudo cargar el tablero. Revisa Supabase y DATABASE_URL."));
+  }, [loadPrograms]);
+
+  useEffect(() => {
+    loadDashboard().catch(() => setMessage("No se pudo conectar con la API."));
+  }, [loadDashboard]);
+
+  const dispatches = useMemo(() => {
+    let rows = payload?.dispatches ?? [];
+    if (typeFilter !== "todos") rows = rows.filter((row) => row.type === typeFilter);
+    if (stateFilter !== "todos") rows = rows.filter((row) => (row.status?.state ?? "pendiente") === stateFilter);
+    if (projectFilter !== "todos") rows = rows.filter((row) => row.project === projectFilter);
+    if (timeFilter !== "todos") {
+      rows = rows.filter((row) => {
+        const state = row.status?.state ?? "pendiente";
+        const time = timeState(row);
+        if (state === "despachado") return false;
+        if (timeFilter === "atrasadas") return time.value > 0;
+        if (timeFilter === "hoy") return time.value === 0;
+        return time.value < 0 && Math.abs(time.value) <= 7;
+      });
+    }
+    if (search.trim()) {
+      const term = search.trim().toLowerCase();
+      rows = rows.filter((row) => [row.project, row.type, row.detail, String(row.units)].join(" ").toLowerCase().includes(term));
+    }
+    return rows.slice().sort((a, b) => {
+      const ta = timeState(a);
+      const tb = timeState(b);
+      const sa = a.status?.state ?? "pendiente";
+      const sb = b.status?.state ?? "pendiente";
+      const rank = (row: DispatchRow, time: ReturnType<typeof timeState>) => {
+        const state = row.status?.state ?? "pendiente";
+        if (state !== "despachado" && time.value > 0) return 0;
+        if (state !== "despachado" && time.value === 0) return 1;
+        if (state === "cambio") return 2;
+        if (state !== "despachado" && time.value < 0 && Math.abs(time.value) <= 7) return 3;
+        if (state !== "despachado") return 4;
+        return 5;
+      };
+      const ra = rank(a, ta);
+      const rb = rank(b, tb);
+      if (ra !== rb) return ra - rb;
+      if (sa !== sb && (sa === "despachado" || sb === "despachado")) return sa === "despachado" ? 1 : -1;
+      return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+    });
+  }, [payload, typeFilter, stateFilter, projectFilter, timeFilter, search]);
+
+  const projects = useMemo(() => ["todos", ...Array.from(new Set((payload?.dispatches ?? []).map((row) => row.project)))], [payload]);
+  const activeProgram = payload?.program ?? programs.find((program) => program.id === programId) ?? programs.find((program) => program.active);
+
+  const start = useMemo(() => {
+    const dates = dispatches.map((row) => new Date(row.scheduledAt).getTime());
+    return dates.length ? Math.min(...dates) : Date.now();
+  }, [dispatches]);
+
+  const end = useMemo(() => {
+    const dates = dispatches.map((row) => new Date(row.scheduledAt).getTime());
+    return dates.length ? Math.max(...dates) : Date.now();
+  }, [dispatches]);
+
+  const span = Math.max(1, Math.round((end - start) / 86400000));
+  const summary = payload?.summary ?? { total: 0, dispatched: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, projects: 0, onTime: 0, late: 0, early: 0, onTimeRate: 0, lateRate: 0, earlyRate: 0 };
+  const checkedRows = useMemo(() => dispatches.filter((row) => checked.includes(row.id)), [checked, dispatches]);
+  const selectedProjectPerformance = useMemo(() => {
+    if (projectFilter === "todos") return null;
+    return payload?.projectPerformance?.find((item) => item.project === projectFilter) ?? null;
+  }, [payload, projectFilter]);
+  const groupedDispatches = useMemo(() => {
+    const map = new Map<string, DispatchRow[]>();
+    dispatches.forEach((row) => map.set(row.project, [...(map.get(row.project) ?? []), row]));
+    return Array.from(map.entries()).map(([project, rows]) => {
+      const performance = payload?.projectPerformance?.find((item) => item.project === project);
+      const pendingCritical = rows.filter((row) => {
+        const state = row.status?.state ?? "pendiente";
+        return state !== "despachado" && timeState(row).value >= 0;
+      }).length;
+      const delayedTasks = rows.filter((row) => timeState(row).value > 0).length;
+      const upcomingTasks = rows.filter((row) => {
+        const state = row.status?.state ?? "pendiente";
+        const value = timeState(row).value;
+        return state !== "despachado" && value <= 0 && value >= -7;
+      }).length;
+      const projectRows = rows.slice().sort((a, b) => taskPriority(a) - taskPriority(b) || new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
+      const maxDelay = projectRows.reduce((max, row) => {
+        return Math.max(max, timeState(row).value);
+      }, 0);
+      const priority = Math.min(...projectRows.map(taskPriority));
+      return { project, rows: projectRows, performance, pendingCritical, delayedTasks, upcomingTasks, maxDelay, priority };
+    }).sort((a, b) => {
+      if (projectSort === "nombre") return a.project.localeCompare(b.project);
+      if (projectSort === "cumplimiento") return (a.performance?.completion ?? 0) - (b.performance?.completion ?? 0);
+      if (projectSort === "prioridad" && a.priority !== b.priority) return a.priority - b.priority;
+      if (a.maxDelay !== b.maxDelay) return b.maxDelay - a.maxDelay;
+      if (a.delayedTasks !== b.delayedTasks) return b.delayedTasks - a.delayedTasks;
+      if (a.pendingCritical !== b.pendingCritical) return b.pendingCritical - a.pendingCritical;
+      return (b.performance?.lateRate ?? 0) - (a.performance?.lateRate ?? 0);
+    });
+  }, [dispatches, payload, projectSort]);
+  const urgentRows = useMemo(() => {
+    return (payload?.dispatches ?? [])
+      .filter((row) => (row.status?.state ?? "pendiente") !== "despachado")
+      .map((row) => ({ row, time: timeState(row) }))
+      .filter((item) => item.time.value >= 0 || Math.abs(item.time.value) <= 3 || item.row.status?.state === "cambio")
+      .sort((a, b) => b.time.value - a.time.value)
+      .slice(0, 8);
+  }, [payload]);
+  const timelineRows = useMemo(() => {
+    return (payload?.dispatches ?? [])
+      .slice()
+      .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+      .filter((row) => (row.status?.state ?? "pendiente") !== "despachado");
+  }, [payload]);
+
+  function toggleChecked(id: string) {
+    setChecked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function toggleAllVisible() {
+    const visibleIds = dispatches.map((row) => row.id);
+    const allVisibleChecked = visibleIds.every((id) => checked.includes(id));
+    setChecked(allVisibleChecked ? checked.filter((id) => !visibleIds.includes(id)) : Array.from(new Set([...checked, ...visibleIds])));
+  }
+
+  function toggleProject(project: string) {
+    setCollapsedProjects((current) => current.includes(project) ? current.filter((item) => item !== project) : [...current, project]);
+  }
+
+  function toggleProjectSelection(rows: DispatchRow[]) {
+    const ids = rows.map((row) => row.id);
+    const allSelected = ids.every((id) => checked.includes(id));
+    setChecked(allSelected ? checked.filter((id) => !ids.includes(id)) : Array.from(new Set([...checked, ...ids])));
+  }
+
+  function collapseAllProjects() {
+    setCollapsedProjects(groupedDispatches.map((group) => group.project));
+  }
+
+  function expandAllProjects() {
+    setCollapsedProjects([]);
+  }
+
+  async function ensureProgram() {
+    if (activeProgram?.id) return activeProgram.id;
+
+    const today = todayOnly();
+    const res = await fetch("/api/programs", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "Tablero principal Formatto",
+        builder: "Formatto",
+        startsAt: today,
+        active: true,
+        dispatches: []
+      })
+    });
+    if (!res.ok) throw new Error("No se pudo crear el tablero principal.");
+    const data = await res.json();
+    setProgramId(data.program.id);
+    return data.program.id as string;
+  }
+
+  async function saveTask(draft: TaskDraft, row?: DispatchRow) {
+    setBusy(true);
+    try {
+      const targetProgramId = await ensureProgram();
+      const body = JSON.stringify({
+        project: normalizeProjectName(draft.project),
+        type: draft.type,
+        detail: draft.detail.trim() || null,
+        units: Number(draft.units) || 0,
+        scheduledAt: draft.scheduledAt,
+        source: "manual"
+      });
+      const res = await fetch(row ? `/api/dispatches/${row.id}` : `/api/programs/${targetProgramId}/dispatches`, {
+        method: row ? "PATCH" : "POST",
+        headers,
+        body
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        setMessage(error.error ?? "No se pudo guardar la tarea.");
+        return;
+      }
+      setTaskModal(null);
+      setMessage(row ? "Tarea editada correctamente." : "Tarea agregada al tablero.");
+      await loadPrograms();
+      await loadDashboard(targetProgramId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteTask(row: DispatchRow) {
+    if (!confirm("Eliminar esta tarea del tablero?")) return;
+    setBusy(true);
+    const res = await fetch(`/api/dispatches/${row.id}`, { method: "DELETE", headers });
+    setBusy(false);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      setMessage(error.error ?? "No se pudo eliminar la tarea.");
+      return;
+    }
+    setSelected(null);
+    setChecked((current) => current.filter((id) => id !== row.id));
+    setMessage("Tarea eliminada.");
+    await loadDashboard();
+  }
+
+  async function saveStatus(row: DispatchRow, state: DispatchState, actualAt: string, notes: string) {
+    setBusy(true);
+    const res = await fetch(`/api/dispatches/${row.id}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ state, actualAt: actualAt || null, notes })
+    });
+    setBusy(false);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      setMessage(error.error ?? "No se pudo guardar el estado.");
+      return;
+    }
+    setSelected(null);
+    setMessage("Estado guardado correctamente.");
+    await loadDashboard();
+  }
+
+  async function saveBulkStatus(draft: BulkDraft) {
+    if (checked.length === 0) return;
+    setBusy(true);
+    const res = await fetch("/api/dispatches/bulk-status", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        ids: checked,
+        status: { state: draft.state, actualAt: draft.actualAt || null, notes: draft.notes }
+      })
+    });
+    setBusy(false);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      setMessage(error.error ?? "No se pudo actualizar masivamente.");
+      return;
+    }
+    setMessage(`${checked.length} tareas actualizadas.`);
+    setChecked([]);
+    await loadDashboard();
+  }
+
+  async function importExcel(file: File) {
+    setBusy(true);
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+    const targetProgramId = await ensureProgram();
+    let created = 0;
+
+    for (const row of rows) {
+      const get = (...keys: string[]) => {
+        const found = Object.keys(row).find((key) => keys.some((candidate) => key.toLowerCase().includes(candidate)));
+        return found ? String(row[found] ?? "").trim() : "";
+      };
+      const project = get("proyecto");
+      const scheduledAt = get("fecha despacho", "fecha");
+      if (!project || !scheduledAt) continue;
+      const date = scheduledAt.length >= 10 ? scheduledAt.slice(0, 10) : dateOnly(new Date(scheduledAt).toISOString());
+      const detail = [get("torre"), get("piso"), get("observacion", "obs")].filter(Boolean).join(" · ");
+      const res = await fetch(`/api/programs/${targetProgramId}/dispatches`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          project,
+          type: get("tipo", "conjunto") || "COCINA",
+          detail,
+          units: Number(get("depto", "deptos", "casas")) || 0,
+          scheduledAt: date,
+          source: "excel"
+        })
+      });
+      if (res.ok) created++;
+    }
+
+    setBusy(false);
+    setMessage(`Importadas ${created} tareas al tablero actual.`);
+    await loadDashboard(targetProgramId);
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    window.localStorage.removeItem("formatto-session");
+    setSession(null);
+  }
+
+  if (!session) {
+    return <LoginScreen onLogin={(nextSession) => { window.localStorage.setItem("formatto-session", JSON.stringify(nextSession)); setSession(nextSession); }} />;
+  }
+
+  return (
+    <main className="formatto-shell">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--g2)] bg-white px-6 py-4">
+        <div className="flex items-center gap-4">
+          <Image src="/formatto-logo.png" alt="Formatto" width={190} height={34} priority />
+          <div className="h-8 w-px bg-[var(--g2)]" />
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.08em] text-[var(--blk)]">Control de Entregas</div>
+            <div className="text-[10px] text-[var(--mut)]">Tablero principal de control</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="primary-button inline-flex items-center gap-2" disabled={busy || role !== "admin"} onClick={() => setTaskModal({ mode: "create" })}><Plus size={14} />Agregar tarea</button>
+          <label className={`thin-button inline-flex items-center gap-2 ${role !== "admin" ? "opacity-50" : ""}`}>
+            <Upload size={14} />Importar
+            <input type="file" accept=".xlsx,.xls" className="hidden" disabled={role !== "admin"} onChange={(event) => event.target.files?.[0] && importExcel(event.target.files[0])} />
+          </label>
+          <button className="thin-button inline-flex items-center gap-2" onClick={() => loadDashboard()}><RefreshCw size={14} />Actualizar</button>
+          <a className="primary-button inline-flex items-center gap-2 no-underline" href={`/reporte${programId ? `?programId=${programId}` : ""}`} target="_blank"><Download size={14} />Exportar</a>
+          <button className="thin-button inline-flex items-center gap-2" onClick={logout}><LogOut size={14} />{session.name}</button>
+        </div>
+      </header>
+
+      {message && <div className="mx-6 mt-4 border-l-4 border-[var(--org)] bg-[#faece7] px-4 py-2 text-xs text-[#8b2500]">{message}</div>}
+
+      <section className="px-6 py-4">
+          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-6">
+          {[
+            ["Total", summary.total],
+            ["Proyectos", summary.projects],
+            ["Despachados", summary.dispatched],
+            ["Atraso", `${summary.lateRate}%`],
+            ["On time", `${summary.onTimeRate}%`],
+            ["Adelanto", `${summary.earlyRate}%`]
+          ].map(([label, value]) => (
+            <div key={label} className="border border-[var(--g2)] border-t-[3px] border-t-[var(--org)] bg-white p-3">
+              <div className="text-[9px] uppercase tracking-[0.07em] text-[var(--mut)]">{label}</div>
+              <div className="mt-1 text-2xl font-light text-[var(--blk)]">{value}</div>
+            </div>
+          ))}
+          </div>
+
+          <div className="mb-4 grid grid-cols-1 gap-3 border border-[var(--g2)] bg-white p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Proyecto</label>
+              <select className="field" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
+                {projects.map((project) => <option key={project} value={project}>{project === "todos" ? "Todos los proyectos" : project}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Categoría</label>
+              <select className="field" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+                <option value="todos">Todas las categorías</option>
+                {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado</label>
+              <select className="field" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as DispatchState | "todos")}>
+                <option value="todos">Todos los estados</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="despachado">Despachado</option>
+                <option value="cambio">Cambio</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Tiempo</label>
+              <select className="field" value={timeFilter} onChange={(event) => setTimeFilter(event.target.value as typeof timeFilter)}>
+                <option value="todos">Todo el calendario</option>
+                <option value="atrasadas">Atrasadas</option>
+                <option value="hoy">Hoy</option>
+                <option value="proximas">Próximos 7 días</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button className="thin-button h-[35px] w-full md:w-auto" onClick={() => { setTypeFilter("todos"); setProjectFilter("todos"); setStateFilter("todos"); setTimeFilter("todos"); }}>Limpiar</button>
+            </div>
+          </div>
+
+          {selectedProjectPerformance && (
+            <div className="mb-4 grid grid-cols-2 gap-2 border border-[var(--g2)] bg-white p-3 md:grid-cols-6">
+              <div className="md:col-span-2">
+                <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Comportamiento cliente/proyecto</div>
+                <div className="text-base font-semibold">{selectedProjectPerformance.project}</div>
+              </div>
+              <Metric label="Despachado" value={`${selectedProjectPerformance.dispatched}/${selectedProjectPerformance.total}`} />
+              <Metric label="Cumplimiento" value={`${selectedProjectPerformance.completion}%`} />
+              <Metric label="A tiempo" value={`${selectedProjectPerformance.onTimeRate}%`} />
+              <Metric label="Atraso" value={`${selectedProjectPerformance.lateRate}%`} />
+              <Metric label="Adelanto" value={`${selectedProjectPerformance.earlyRate}%`} />
+              <Metric label="Fallos atraso" value={selectedProjectPerformance.late} />
+            </div>
+          )}
+
+          <div className="mb-6 grid grid-cols-1 gap-4">
+            <TimelinePanel rows={timelineRows} offset={timelineOffset} onMove={setTimelineOffset} onSelect={setSelected} />
+            <UrgentPanel items={urgentRows} onSelect={setSelected} />
+          </div>
+
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-lg font-semibold">Tareas</div>
+              <div className="text-xs text-[var(--mut)]">{dispatches.length} tareas encontradas</div>
+            </div>
+            <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
+              <select className="field w-auto" value={projectSort} onChange={(event) => setProjectSort(event.target.value as typeof projectSort)}>
+                <option value="prioridad">Orden natural operativo</option>
+                <option value="atraso">Ordenar por atraso</option>
+                <option value="cumplimiento">Ordenar por menor cumplimiento</option>
+                <option value="nombre">Ordenar A-Z</option>
+              </select>
+              <button className="thin-button" onClick={collapseAllProjects}>Colapsar todo</button>
+              <button className="thin-button" onClick={expandAllProjects}>Expandir todo</button>
+            </div>
+            <div className="w-full">
+              <input className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar proyecto, conjunto, piso..." />
+            </div>
+        </div>
+
+        <BulkStatusBar count={checked.length} rows={checkedRows} role={role} busy={busy} onClear={() => setChecked([])} onSave={saveBulkStatus} />
+
+        <div className="overflow-x-auto border border-[var(--g2)]">
+          <div className="min-w-[980px] bg-white">
+            <div className="grid grid-cols-[38px_1.6fr_170px_160px_112px_44px] border-b border-[var(--g2)] bg-[var(--blk)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-white">
+              <button className="text-left" onClick={toggleAllVisible}>Sel</button>
+              <div>Entrega</div><div>Programación</div><div>Resultado</div><div>Estado</div><div></div>
+            </div>
+            {groupedDispatches.map((group) => (
+              <div key={group.project} className="border-b border-[var(--g2)]">
+                <ProjectGroupHeader
+                  group={group}
+                  collapsed={collapsedProjects.includes(group.project)}
+                  allSelected={group.rows.every((row) => checked.includes(row.id))}
+                  onToggle={() => toggleProject(group.project)}
+                  onSelectAll={() => toggleProjectSelection(group.rows)}
+                />
+                {!collapsedProjects.includes(group.project) && group.rows.map((row) => {
+                  const state = row.status?.state ?? "pendiente";
+                  const time = timeState(row);
+                  const rowTone =
+                    state !== "despachado" && time.value > 0 ? "bg-[#fff7f5]" :
+                    state !== "despachado" && time.value === 0 ? "bg-[#fffaf0]" :
+                    state === "despachado" ? "opacity-70" : "";
+                  const resultDiff = row.status?.actualAt ? businessDiffDays(row.scheduledAt, row.status.actualAt) : null;
+                  return (
+                    <div key={row.id} className={`grid grid-cols-[38px_1.6fr_170px_160px_112px_44px] items-center border-t border-[var(--g2)] px-3 py-2 text-left text-[11px] hover:bg-[var(--g1)] ${rowTone}`}>
+                      <input type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
+                      <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
+                        <div className="truncate font-semibold">{row.type} · {row.detail || "-"}</div>
+                        <div className="mt-1 text-[10px] text-[var(--mut)]">{row.units || "-"} uds</div>
+                      </button>
+                      <button className="text-left" onClick={() => setSelected(row)}>
+                        <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
+                        <div className={`mt-1 text-[11px] ${time.tone}`}>{time.label}</div>
+                      </button>
+                      <button className="text-left" onClick={() => setSelected(row)}>
+                        <div className="font-semibold">{shortDate(row.status?.actualAt)}</div>
+                        <div className="mt-1 text-[11px] text-[var(--mut)]">
+                          {resultDiff === null ? "Sin resultado" : resultDiff === 0 ? "En fecha" : resultDiff > 0 ? `+${resultDiff}d` : `${resultDiff}d`}
+                        </div>
+                      </button>
+                      <div><span className={`status-badge ${statusClass(state)}`}>{state}</span></div>
+                      <button className="thin-button p-2" disabled={role !== "admin"} onClick={() => setTaskModal({ mode: "edit", row })} title="Editar tarea"><Edit3 size={13} /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {selected && (
+        <StatusModal
+          row={selected}
+          role={role}
+          busy={busy}
+          onClose={() => setSelected(null)}
+          onEdit={() => { setSelected(null); setTaskModal({ mode: "edit", row: selected }); }}
+          onDelete={() => deleteTask(selected)}
+          onSave={saveStatus}
+        />
+      )}
+
+      {taskModal && (
+        <TaskModal
+          row={taskModal.row}
+          role={role}
+          busy={busy}
+          onClose={() => setTaskModal(null)}
+          onSave={(draft) => saveTask(draft, taskModal.row)}
+        />
+      )}
+    </main>
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
+  const [email, setEmail] = useState("admin@formatto.cl");
+  const [password, setPassword] = useState("admin123");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setBusy(true);
+    setError("");
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setError("Credenciales invalidas.");
+      return;
+    }
+    const data = await res.json();
+    onLogin(data.user);
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[var(--g1)] p-6">
+      <section className="w-[390px] border border-[var(--g2)] bg-white p-8">
+        <Image src="/formatto-logo.png" alt="Formatto" width={190} height={34} priority />
+        <h1 className="mt-8 text-lg font-bold uppercase tracking-[0.06em]">Control de Entregas</h1>
+        <p className="mb-6 text-xs text-[var(--mut)]">Tablero principal de control</p>
+        <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Email</label>
+        <input className="field mb-3" value={email} onChange={(event) => setEmail(event.target.value)} />
+        <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Clave</label>
+        <input className="field mb-4" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} />
+        {error && <div className="mb-3 border-l-4 border-[var(--org)] bg-[#faece7] p-2 text-xs text-[#8b2500]">{error}</div>}
+        <button className="primary-button w-full" disabled={busy} onClick={submit}>Ingresar</button>
+      </section>
+    </main>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="border-l-2 border-[var(--org)] bg-[var(--g1)] px-3 py-2">
+      <div className="text-[9px] uppercase tracking-[0.06em] text-[var(--mut)]">{label}</div>
+      <div className="text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function ProjectGroupHeader({ group, collapsed, allSelected, onToggle, onSelectAll }: {
+  group: {
+    project: string;
+    rows: DispatchRow[];
+    performance?: {
+      total: number;
+      dispatched: number;
+      completion: number;
+      onTimeRate: number;
+      lateRate: number;
+      earlyRate: number;
+      late: number;
+    };
+    pendingCritical: number;
+    delayedTasks: number;
+    upcomingTasks: number;
+    maxDelay: number;
+  };
+  collapsed: boolean;
+  allSelected: boolean;
+  onToggle: () => void;
+  onSelectAll: () => void;
+}) {
+  const performance = group.performance;
+  const completion = performance?.completion ?? 0;
+  const lateRate = performance?.lateRate ?? 0;
+  const earlyRate = performance?.earlyRate ?? 0;
+  const onTimeRate = performance?.onTimeRate ?? 0;
+  const dominant =
+    group.delayedTasks > 0 ? "atraso" :
+    group.upcomingTasks > 0 ? "proximo" :
+    earlyRate > 0 ? "adelanto" :
+    onTimeRate > 0 ? "ontime" : "neutro";
+  const dominantClass =
+    dominant === "atraso" ? "border-l-[var(--bad)] bg-[#fff7f5]" :
+    dominant === "proximo" ? "border-l-[#55555099] bg-white" :
+    dominant === "adelanto" ? "border-l-[#e9a82580] bg-white" :
+    dominant === "ontime" ? "border-l-[#2d7a3a80] bg-white" :
+    "border-l-[var(--g2)] bg-white";
+
+  return (
+    <div className={`border-l-4 px-3 py-3 ${dominantClass}`}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <button className="thin-button px-2 py-1" onClick={onToggle} title={collapsed ? "Expandir proyecto" : "Colapsar proyecto"}>{collapsed ? "+" : "-"}</button>
+          <input type="checkbox" checked={allSelected} onChange={onSelectAll} aria-label={`Seleccionar tareas de ${group.project}`} />
+          <div>
+          <div className="text-sm font-bold">{group.project}</div>
+          <div className="text-[10px] text-[var(--mut)]">
+            {performance ? `${performance.dispatched}/${performance.total} despachadas` : `${group.rows.length} tareas`}
+            {group.pendingCritical > 0 ? ` · ${group.pendingCritical} criticas` : ""}
+            {group.delayedTasks > 0 ? ` · ${group.delayedTasks} con atraso` : ""}
+            {group.maxDelay > 0 ? ` · max ${group.maxDelay}d atraso` : ""}
+          </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[10px]">
+          <span className="status-badge status-pendiente">Cumpl. {completion}%</span>
+          <span className="status-badge bg-[#eef7f0cc] text-[var(--ok)]">On time {onTimeRate}%</span>
+          <span className="status-badge bg-[#fff6dacc] text-[#8a6500]">Adel. {earlyRate}%</span>
+          <span className="status-badge status-cambio">Atraso {lateRate}%</span>
+        </div>
+      </div>
+      <div className="flex h-2 overflow-hidden bg-[var(--g1)]">
+        {group.delayedTasks > 0 ? (
+          <div className="bg-[var(--bad)]" style={{ width: "100%" }} />
+        ) : group.upcomingTasks > 0 ? (
+          <div className="bg-[#55555066]" style={{ width: "100%" }} />
+        ) : (
+          <>
+            <div className="bg-[#2d7a3a80]" style={{ width: `${onTimeRate}%` }} />
+            <div className="bg-[#e9a82580]" style={{ width: `${earlyRate}%` }} />
+            <div className="bg-[var(--bad)]" style={{ width: `${lateRate}%` }} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TimelinePanel({ rows, offset, onMove, onSelect }: {
+  rows: DispatchRow[];
+  offset: number;
+  onMove: (offset: number) => void;
+  onSelect: (row: DispatchRow) => void;
+}) {
+  const today = todayOnly();
+  const days = useMemo(() => {
+    const center = addBusinessDays(today, offset * 9);
+    return Array.from({ length: 9 }, (_, index) => addBusinessDays(center, index - 4));
+  }, [offset, today]);
+  const rowsByDay = useMemo(() => {
+    const map = new Map<string, DispatchRow[]>();
+    rows.forEach((row) => {
+      const key = dateOnly(row.scheduledAt);
+      map.set(key, [...(map.get(key) ?? []), row]);
+    });
+    return map;
+  }, [rows]);
+
+  return (
+    <section className="border border-[var(--g2)] bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="mb-1 text-base font-semibold">Timeline de Entregas</div>
+          <div className="text-xs text-[var(--mut)]">4 dias atras · hoy · 4 dias adelante</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="thin-button" onClick={() => onMove(offset - 1)}>Anterior</button>
+          <button className="thin-button active" onClick={() => onMove(0)}>Hoy</button>
+          <button className="thin-button" onClick={() => onMove(offset + 1)}>Siguiente</button>
+        </div>
+      </div>
+      <div className="overflow-x-auto pb-2">
+        <div className="relative grid min-w-[1080px] grid-cols-9 gap-2 pb-5 pt-2">
+          <div className="absolute left-0 right-0 top-[44px] h-px bg-[var(--g2)]" />
+          {days.map((day) => {
+            const dayRows = (rowsByDay.get(day) ?? []).slice().sort((a, b) => {
+              const ta = timeState(a);
+              const tb = timeState(b);
+              return tb.value - ta.value || a.project.localeCompare(b.project);
+            });
+            const isToday = day === today;
+            return (
+              <div key={day} className="relative min-w-0 text-left">
+                <div className={`mx-auto mb-3 flex h-10 w-10 items-center justify-center border bg-white text-[10px] font-bold ${isToday ? "border-[var(--org)] text-[var(--org)]" : "border-[var(--g2)] text-[var(--blk)]"}`}>
+                  {shortDate(day).replace(".", "")}
+                </div>
+                {isToday && <div className="mb-2 text-center"><span className="status-badge status-cambio">Hoy</span></div>}
+                <div className={`flex min-h-[112px] flex-col gap-1.5 border p-2 ${isToday ? "border-[var(--org)] bg-[#fff7f5]" : "border-[var(--g2)] bg-[var(--g1)]"}`}>
+                  {dayRows.length === 0 && <div className="pt-8 text-center text-[9px] text-[var(--mut)]">Sin entregas</div>}
+                  {dayRows.map((row) => {
+                    const time = timeState(row);
+                    return (
+                      <button key={row.id} className="bg-white px-2 py-1 text-left shadow-sm hover:outline hover:outline-1 hover:outline-[var(--org)]" onClick={() => onSelect(row)}>
+                        <div className="truncate text-[10px] font-bold text-[var(--org)]">{row.project}</div>
+                        <div className="truncate text-[9px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+                        <div className={`text-[9px] ${time.tone}`}>{time.label}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="mt-1 border-t border-[var(--g2)] pt-3 text-[10px] text-[var(--mut)]">Hoy fijado: {shortDate(today)}. Si hay mas de una entrega por dia, se apilan hacia abajo.</div>
+    </section>
+  );
+}
+
+function UrgentPanel({ items, onSelect }: { items: Array<{ row: DispatchRow; time: ReturnType<typeof timeState> }>; onSelect: (row: DispatchRow) => void }) {
+  return (
+    <section className="border border-[var(--g2)] bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="text-base font-semibold">Entregas Urgentes</div>
+        <span className="status-badge status-cambio">{items.length}</span>
+      </div>
+      <div className="grid max-h-[260px] grid-cols-1 gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
+        {items.length === 0 && <div className="text-xs text-[var(--mut)]">No hay entregas urgentes.</div>}
+        {items.map(({ row, time }) => (
+          <button key={row.id} className="border-l-4 border-[var(--org)] bg-[#fff7f5] p-3 text-left hover:bg-[#faece7]" onClick={() => onSelect(row)}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">{row.project}</div>
+                <div className="text-[11px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              </div>
+              <span className="status-badge status-cambio">{time.label}</span>
+            </div>
+            <div className="mt-3 text-[11px] text-[var(--mut)]">{shortDate(row.scheduledAt)} · {row.units || "-"} uds</div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BulkStatusBar({ count, rows, role, busy, onClear, onSave }: {
+  count: number;
+  rows: DispatchRow[];
+  role: Role;
+  busy: boolean;
+  onClear: () => void;
+  onSave: (draft: BulkDraft) => void;
+}) {
+  const [state, setState] = useState<DispatchState>("despachado");
+  const [actualAt, setActualAt] = useState(todayOnly());
+  const [notes, setNotes] = useState("");
+  const disabled = count === 0 || role === "lector" || busy;
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 border border-[var(--g2)] bg-white p-3">
+      <div className="mr-2 text-xs font-semibold text-[var(--blk)]">{count} seleccionadas</div>
+      <select className="field w-auto" value={state} disabled={disabled} onChange={(event) => setState(event.target.value as DispatchState)}>
+        <option value="despachado">Despachado</option>
+        <option value="cambio">Cambio</option>
+        <option value="pendiente">Pendiente</option>
+      </select>
+      <input className="field w-auto" type="date" value={actualAt} disabled={disabled || state === "pendiente"} onChange={(event) => setActualAt(event.target.value)} />
+      <input className="field min-w-[260px] flex-1" value={notes} disabled={disabled} onChange={(event) => setNotes(event.target.value)} placeholder={rows.length ? `Nota para ${rows.length} tareas` : "Selecciona tareas para actualizacion masiva"} />
+      <button className="primary-button" disabled={disabled} onClick={() => onSave({ state, actualAt, notes })}>Actualizar masivo</button>
+      <button className="thin-button" disabled={count === 0} onClick={onClear}>Limpiar</button>
+    </div>
+  );
+}
+
+function TaskModal({ row, role, busy, onClose, onSave }: {
+  row?: DispatchRow;
+  role: Role;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (draft: TaskDraft) => void;
+}) {
+  const [draft, setDraft] = useState<TaskDraft>(row ? toTaskDraft(row) : emptyTask());
+  const readonly = role !== "admin";
+  const valid = draft.project.trim() && draft.type && draft.scheduledAt;
+
+  function setField(field: keyof TaskDraft, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
+      <div className="w-[520px] max-w-full bg-white" onClick={(event) => event.stopPropagation()}>
+        <div className="border-b border-[var(--g2)] px-5 py-4">
+          <div className="text-sm font-bold uppercase tracking-[0.04em]">{row ? "Editar tarea" : "Agregar tarea"}</div>
+          <div className="text-[11px] text-[var(--mut)]">Proyecto, conjunto, fecha programada y unidades.</div>
+        </div>
+        <div className="grid gap-3 px-5 py-4">
+          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Proyecto</label>
+          <input className="field" value={draft.project} disabled={readonly} onChange={(event) => setField("project", event.target.value)} placeholder="Ej: VIENTO NORTE" />
+          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Conjunto</label>
+          <select className="field" value={draft.type} disabled={readonly} onChange={(event) => setField("type", event.target.value)}>
+            {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Detalle</label>
+          <input className="field" value={draft.detail} disabled={readonly} onChange={(event) => setField("detail", event.target.value)} placeholder="Torre, piso, nucleo, observacion" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Unidades</label>
+              <input className="field" type="number" min="0" value={draft.units} disabled={readonly} onChange={(event) => setField("units", event.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Fecha programada</label>
+              <input className="field" type="date" value={draft.scheduledAt} disabled={readonly} onChange={(event) => setField("scheduledAt", event.target.value)} />
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-between border-t border-[var(--g2)] px-5 py-4">
+          <div className="flex items-center gap-2 text-[10px] text-[var(--mut)]"><Shield size={13} />Solo admin edita tareas</div>
+          <div className="flex gap-2">
+            <button className="thin-button" onClick={onClose}>Cancelar</button>
+            <button className="primary-button inline-flex items-center gap-2" disabled={busy || readonly || !valid} onClick={() => onSave(draft)}><Save size={14} />Guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
+  row: DispatchRow;
+  role: Role;
+  busy: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSave: (row: DispatchRow, state: DispatchState, actualAt: string, notes: string) => void;
+}) {
+  const [state, setState] = useState<DispatchState>(row.status?.state ?? "pendiente");
+  const [actualAt, setActualAt] = useState(dateOnly(row.status?.actualAt));
+  const [notes, setNotes] = useState(row.status?.notes ?? "");
+  const diff = businessDiffDays(row.scheduledAt, actualAt);
+  const readonly = role === "lector";
+  const showDispatchSummary = state === "despachado" && Boolean(actualAt) && diff !== null;
+  const currentTime = timeState(row);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
+      <div className="max-h-[92vh] w-[480px] max-w-full overflow-y-auto bg-white" onClick={(event) => event.stopPropagation()}>
+        <div className="border-b border-[var(--g2)] px-5 py-4">
+          <div className="text-sm font-bold uppercase tracking-[0.04em]">{row.project} · {row.type}</div>
+          <div className="text-[11px] text-[var(--mut)]">{row.detail || "-"} · Programado {shortDate(row.scheduledAt)}</div>
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="bg-[var(--g1)] p-3"><b>Unidades</b><br />{row.units || "-"}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Fecha programada</b><br />{shortDate(row.scheduledAt)}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Estado tiempo</b><br /><span className={currentTime.tone}>{currentTime.label}</span></div>
+            <div className="bg-[var(--g1)] p-3"><b>Ultima actualizacion</b><br />{shortDate(row.status?.updatedAt)}</div>
+          </div>
+          <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado</label>
+          <select className="field" value={state} disabled={readonly} onChange={(event) => setState(event.target.value as DispatchState)}>
+            <option value="pendiente">Pendiente</option>
+            <option value="despachado">Despachado</option>
+            <option value="cambio">Cambio</option>
+          </select>
+          {state !== "pendiente" && (
+            <>
+              <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{state === "cambio" ? "Nueva fecha propuesta" : "Fecha real de despacho"}</label>
+              <input className="field" type="date" value={actualAt} disabled={readonly} onChange={(event) => setActualAt(event.target.value)} />
+              {diff !== null && <div className="border-l-4 border-[var(--org)] bg-[var(--g1)] p-3 text-xs"><b>{diff === 0 ? "En fecha" : diff > 0 ? `${diff} dias de atraso` : `${Math.abs(diff)} dias de adelanto`}</b></div>}
+            </>
+          )}
+          {showDispatchSummary && (
+            <div className="border border-[var(--g2)] bg-white">
+              <div className="border-b border-[var(--g2)] bg-[var(--blk)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] text-white">Resumen de despacho</div>
+              <div className="grid grid-cols-2 gap-2 p-3 text-[11px]">
+                <div className="bg-[var(--g1)] p-3">
+                  <div className="text-[9px] uppercase text-[var(--mut)]">Programado</div>
+                  <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
+                </div>
+                <div className="bg-[var(--g1)] p-3">
+                  <div className="text-[9px] uppercase text-[var(--mut)]">Real</div>
+                  <div className="font-semibold">{shortDate(actualAt)}</div>
+                </div>
+                <div className="bg-[var(--g1)] p-3">
+                  <div className="text-[9px] uppercase text-[var(--mut)]">Unidades</div>
+                  <div className="font-semibold">{row.units || "-"} uds</div>
+                </div>
+                <div className="bg-[var(--g1)] p-3">
+                  <div className="text-[9px] uppercase text-[var(--mut)]">Resultado</div>
+                  <div className={diff > 0 ? "font-semibold text-[var(--bad)]" : diff < 0 ? "font-semibold text-[var(--ok)]" : "font-semibold text-[var(--mut)]"}>
+                    {diff === 0 ? "En fecha" : diff > 0 ? `${diff}d atraso` : `${Math.abs(diff)}d adelanto`}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Notas</label>
+          <textarea className="field min-h-24" value={notes} disabled={readonly} onChange={(event) => setNotes(event.target.value)} />
+          <div className="border-t border-[var(--g2)] pt-3">
+            <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]"><History size={13} />Historial</div>
+            {(row.events ?? []).length === 0 ? <div className="text-xs text-[var(--mut)]">Sin eventos registrados.</div> : row.events?.map((event) => (
+              <div key={event.id} className="mb-2 text-xs text-[var(--mut)]">{shortDate(event.createdAt)} · {event.state} · {event.notes || "sin notas"}</div>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap justify-between gap-2 border-t border-[var(--g2)] px-5 py-4">
+          <div className="flex gap-2">
+            <button className="thin-button inline-flex items-center gap-2" disabled={role !== "admin"} onClick={onEdit}><Edit3 size={13} />Editar</button>
+            <button className="thin-button inline-flex items-center gap-2" disabled={role !== "admin"} onClick={onDelete}><Trash2 size={13} />Eliminar</button>
+          </div>
+          <div className="flex gap-2">
+            <button className="thin-button" onClick={onClose}>Cancelar</button>
+            <button className="primary-button inline-flex items-center gap-2" disabled={busy || readonly} onClick={() => onSave(row, state, actualAt, notes)}><Save size={14} />Guardar estado</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

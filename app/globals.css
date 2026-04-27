@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --org: #ce4620;
+  --blk: #111111;
+  --wht: #ffffff;
+  --g1: #f4f3f0;
+  --g2: #e6e3dd;
+  --g3: #b8b4ac;
+  --txt: #1a1a1a;
+  --mut: #888888;
+  --ok: #2d7a3a;
+  --warn: #a06010;
+  --bad: #c0392b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--g1);
+  color: var(--txt);
+  font-family: "Nunito", "Helvetica Neue", Arial, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.formatto-shell {
+  max-width: 1400px;
+  margin: 0 auto;
+  background: var(--wht);
+  min-height: 100vh;
+}
+
+.thin-button {
+  border: 0.5px solid var(--g2);
+  background: transparent;
+  color: var(--txt);
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.thin-button:hover,
+.thin-button.active {
+  border-color: var(--org);
+  color: var(--org);
+}
+
+.primary-button {
+  border: 0.5px solid var(--org);
+  background: var(--org);
+  color: var(--wht);
+  padding: 7px 14px;
+  border-radius: 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.primary-button:disabled,
+.thin-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.field {
+  border: 0.5px solid var(--g2);
+  background: var(--g1);
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+}
+
+.field:focus {
+  border-color: var(--org);
+  background: var(--wht);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.status-despachado {
+  color: var(--ok);
+  background: #eef7f0;
+}
+
+.status-cambio {
+  color: var(--warn);
+  background: #fef3e2;
+}
+
+.status-pendiente {
+  color: var(--mut);
+  background: var(--g1);
+}

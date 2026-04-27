@@ -1,0 +1,11 @@
+node_modules
+.next
+.env
+.env.local
+.env.production.local
+backups
+dist
+coverage
+*.log
+supabase/.temp
+supabase/.branches

@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  operador
+  lector
+}
+
+enum DispatchState {
+  pendiente
+  despachado
+  cambio
+}
+
+enum DispatchSource {
+  programa
+  excel
+  manual
+}
+
+model Profile {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  fullName  String
+  role      Role     @default(lector)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events DispatchEvent[]
+}
+
+model Program {
+  id          String     @id @default(uuid())
+  name        String
+  builder     String
+  startsAt    DateTime?
+  endsAt      DateTime?
+  active      Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  dispatches  Dispatch[]
+
+  @@index([active])
+  @@index([createdAt])
+}
+
+model Dispatch {
+  id          String         @id @default(uuid())
+  legacyId    Int?
+  programId   String
+  program     Program        @relation(fields: [programId], references: [id], onDelete: Cascade)
+  project     String
+  type        String
+  detail      String?
+  tower       String?
+  core        String?
+  floor       String?
+  units       Int            @default(0)
+  scheduledAt DateTime
+  source      DispatchSource @default(programa)
+  sortOrder   Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  status      DispatchStatus?
+  events      DispatchEvent[]
+
+  @@index([programId, project])
+  @@index([scheduledAt])
+  @@unique([programId, legacyId])
+}
+
+model DispatchStatus {
+  dispatchId String        @id
+  dispatch   Dispatch      @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  state      DispatchState @default(pendiente)
+  actualAt   DateTime?
+  notes      String?
+  updatedBy  String?
+  updatedAt  DateTime      @updatedAt
+  createdAt  DateTime      @default(now())
+}
+
+model DispatchEvent {
+  id         String        @id @default(uuid())
+  dispatchId String
+  dispatch   Dispatch      @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  state      DispatchState
+  actualAt   DateTime?
+  notes      String?
+  actorId    String?
+  actor      Profile?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime      @default(now())
+
+  @@index([dispatchId, createdAt])
+}
