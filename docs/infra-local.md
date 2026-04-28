@@ -82,6 +82,22 @@ npm run start
 
 Para dejarla permanente, crear una tarea de Windows o usar NSSM/PM2 apuntando a `npm run start`.
 
+Este proyecto incluye scripts para Programador de tareas:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-startup-tasks.ps1
+Start-ScheduledTask -TaskName "Formatto Control App"
+Start-ScheduledTask -TaskName "Formatto Control Tunnel"
+```
+
+Nota: `start-formatto-tunnel.cmd` usa el tunel rapido de Cloudflare, por lo que la URL puede cambiar. Para URL fija, usar named tunnel con dominio propio.
+
+Si Windows bloquea el Programador de tareas, usar accesos directos en Inicio:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-startup-shortcuts.ps1
+```
+
 ## Backup
 
 Definir `DATABASE_URL` y ejecutar:

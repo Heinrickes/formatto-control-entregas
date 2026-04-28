@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Edit3, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload } from "lucide-react";
+import { Download, Edit3, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload, Users } from "lucide-react";
 import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
 
 const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "MARCOS CLOSET", "QUINCALLERIA", "ADICIONAL", "POST VENTA"];
@@ -27,6 +27,27 @@ type Session = {
   email: string;
   role: Role;
   name: string;
+};
+
+type UserRow = {
+  id: string;
+  email: string;
+  fullName: string;
+  role: Role;
+  area?: string | null;
+  position?: string | null;
+  active: boolean;
+  mustChangePassword: boolean;
+};
+
+type UserDraft = {
+  email: string;
+  fullName: string;
+  role: Role;
+  area: string;
+  position: string;
+  password: string;
+  active: boolean;
 };
 
 const emptyTask = (): TaskDraft => ({
@@ -185,6 +206,7 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<DispatchRow | null>(null);
   const [taskModal, setTaskModal] = useState<{ mode: "create" | "edit"; row?: DispatchRow } | null>(null);
+  const [usersModal, setUsersModal] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [collapsedProjects, setCollapsedProjects] = useState<string[]>([]);
   const [projectSort, setProjectSort] = useState<"prioridad" | "atraso" | "cumplimiento" | "nombre">("prioridad");
@@ -535,6 +557,7 @@ export default function Home() {
             <Upload size={14} />Importar
             <input type="file" accept=".xlsx,.xls" className="hidden" disabled={role !== "admin"} onChange={(event) => event.target.files?.[0] && importExcel(event.target.files[0])} />
           </label>
+          {role === "admin" && <button className="thin-button inline-flex items-center gap-2" onClick={() => setUsersModal(true)}><Users size={14} />Usuarios</button>}
           <button className="thin-button inline-flex items-center gap-2" onClick={() => loadDashboard()}><RefreshCw size={14} />Actualizar</button>
           <a className="primary-button inline-flex items-center gap-2 no-underline" href={`/reporte${programId ? `?programId=${programId}` : ""}`} target="_blank"><Download size={14} />Exportar</a>
           <button className="thin-button inline-flex items-center gap-2" onClick={logout}><LogOut size={14} />{session.name}</button>
@@ -711,13 +734,23 @@ export default function Home() {
           onSave={(draft) => saveTask(draft, taskModal.row)}
         />
       )}
+
+      {usersModal && (
+        <UsersModal
+          headers={headers}
+          busy={busy}
+          setBusy={setBusy}
+          onMessage={setMessage}
+          onClose={() => setUsersModal(false)}
+        />
+      )}
     </main>
   );
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
-  const [email, setEmail] = useState("admin@formatto.cl");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("enrique.arenas@formatto.cl");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -752,6 +785,190 @@ function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
         <button className="primary-button w-full" disabled={busy} onClick={submit}>Ingresar</button>
       </section>
     </main>
+  );
+}
+
+function emptyUserDraft(): UserDraft {
+  return {
+    email: "",
+    fullName: "",
+    role: "lector",
+    area: "Planificacion y Adquisiciones",
+    position: "",
+    password: "",
+    active: true
+  };
+}
+
+function UsersModal({
+  headers,
+  busy,
+  setBusy,
+  onMessage,
+  onClose
+}: {
+  headers: Record<string, string>;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  onMessage: (message: string) => void;
+  onClose: () => void;
+}) {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [areas, setAreas] = useState<string[]>([]);
+  const [draft, setDraft] = useState<UserDraft>(emptyUserDraft());
+  const [editing, setEditing] = useState<UserRow | null>(null);
+  const [createdPassword, setCreatedPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const loadUsers = useCallback(async () => {
+    const res = await fetch("/api/users", { headers });
+    if (!res.ok) {
+      setError("No se pudieron cargar los usuarios.");
+      return;
+    }
+    const data = await res.json();
+    setUsers(data.users ?? []);
+    setAreas(data.areas ?? []);
+  }, [headers]);
+
+  useEffect(() => {
+    loadUsers().catch(() => setError("No se pudieron cargar los usuarios."));
+  }, [loadUsers]);
+
+  function editUser(user: UserRow) {
+    setEditing(user);
+    setCreatedPassword("");
+    setDraft({
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      area: user.area ?? "Planificacion y Adquisiciones",
+      position: user.position ?? "",
+      password: "",
+      active: user.active
+    });
+  }
+
+  function resetForm() {
+    setEditing(null);
+    setDraft(emptyUserDraft());
+    setCreatedPassword("");
+    setError("");
+  }
+
+  async function saveUser() {
+    setBusy(true);
+    setError("");
+    setCreatedPassword("");
+    const res = await fetch(editing ? `/api/users/${editing.id}` : "/api/users", {
+      method: editing ? "PATCH" : "POST",
+      headers,
+      body: JSON.stringify({
+        email: draft.email,
+        fullName: draft.fullName,
+        role: draft.role,
+        area: draft.area,
+        position: draft.position,
+        password: draft.password || null,
+        active: draft.active
+      })
+    });
+    setBusy(false);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error ?? "No se pudo guardar el usuario. Revisa duplicados y campos obligatorios.");
+      return;
+    }
+    if (data.initialPassword) setCreatedPassword(data.initialPassword);
+    onMessage(editing ? "Usuario actualizado." : "Usuario creado.");
+    resetForm();
+    await loadUsers();
+  }
+
+  async function deactivateUser(user: UserRow) {
+    if (!confirm(`Desactivar usuario ${user.email}?`)) return;
+    setBusy(true);
+    const res = await fetch(`/api/users/${user.id}`, { method: "DELETE", headers });
+    setBusy(false);
+    if (!res.ok) {
+      setError("No se pudo desactivar el usuario.");
+      return;
+    }
+    onMessage("Usuario desactivado.");
+    await loadUsers();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4">
+      <section className="mt-8 w-full max-w-6xl border border-[var(--g2)] bg-white">
+        <div className="flex items-center justify-between border-b border-[var(--g2)] px-5 py-4">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-[0.08em]">Usuarios y roles</h2>
+            <p className="text-xs text-[var(--mut)]">Administra accesos, areas y claves iniciales.</p>
+          </div>
+          <button className="thin-button" onClick={onClose}>Cerrar</button>
+        </div>
+
+        <div className="grid gap-4 p-5 lg:grid-cols-[360px_1fr]">
+          <div className="border border-[var(--g2)] p-4">
+            <div className="mb-3 text-xs font-semibold uppercase tracking-[0.06em]">{editing ? "Editar usuario" : "Nuevo usuario"}</div>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Nombre</label>
+            <input className="field mb-2" value={draft.fullName} onChange={(event) => setDraft({ ...draft, fullName: event.target.value })} />
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Email</label>
+            <input className="field mb-2" value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} />
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Area</label>
+            <select className="field mb-2" value={draft.area} onChange={(event) => setDraft({ ...draft, area: event.target.value })}>
+              {areas.map((area) => <option key={area} value={area}>{area}</option>)}
+            </select>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Cargo</label>
+            <input className="field mb-2" value={draft.position} onChange={(event) => setDraft({ ...draft, position: event.target.value })} />
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Rol</label>
+            <select className="field mb-2" value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value as Role })}>
+              <option value="admin">Admin</option>
+              <option value="operador">Operador</option>
+              <option value="lector">Lector</option>
+            </select>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Clave {editing ? "nueva opcional" : "opcional"}</label>
+            <input className="field mb-2" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="Vacio: genera por area" />
+            <label className="mb-4 flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={draft.active} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} />
+              Usuario activo
+            </label>
+            {createdPassword && <div className="mb-3 border-l-4 border-[var(--ok)] bg-[#eef8f1] p-2 text-xs">Clave inicial generada: <strong>{createdPassword}</strong></div>}
+            {error && <div className="mb-3 border-l-4 border-[var(--org)] bg-[#faece7] p-2 text-xs text-[#8b2500]">{error}</div>}
+            <div className="flex gap-2">
+              <button className="primary-button" disabled={busy} onClick={saveUser}><Save size={14} /> Guardar</button>
+              <button className="thin-button" onClick={resetForm}>Limpiar</button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-[var(--g2)]">
+            <div className="min-w-[760px]">
+              <div className="grid grid-cols-[1.2fr_1.2fr_120px_120px_90px_120px] bg-[var(--blk)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-white">
+                <div>Usuario</div><div>Area</div><div>Cargo</div><div>Rol</div><div>Estado</div><div></div>
+              </div>
+              {users.map((user) => (
+                <div key={user.id} className="grid grid-cols-[1.2fr_1.2fr_120px_120px_90px_120px] items-center border-t border-[var(--g2)] px-3 py-2 text-[11px]">
+                  <div>
+                    <div className="font-semibold">{user.fullName}</div>
+                    <div className="text-[10px] text-[var(--mut)]">{user.email}</div>
+                  </div>
+                  <div>{user.area ?? "-"}</div>
+                  <div className="truncate">{user.position ?? "-"}</div>
+                  <div><span className="status-badge status-pendiente">{user.role}</span></div>
+                  <div>{user.active ? "Activo" : "Inactivo"}</div>
+                  <div className="flex justify-end gap-2">
+                    <button className="thin-button p-2" onClick={() => editUser(user)} title="Editar usuario"><Edit3 size={13} /></button>
+                    <button className="thin-button p-2" disabled={!user.active} onClick={() => deactivateUser(user)} title="Desactivar usuario"><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              ))}
+              {users.length === 0 && <div className="p-4 text-xs text-[var(--mut)]">Sin usuarios creados.</div>}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 

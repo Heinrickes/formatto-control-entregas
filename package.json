@@ -1,5 +1,5 @@
 {
-  "name": "formatto-control-entregas",
+  "name": "control-de-entregas-formatto",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,8 +9,11 @@
     "lint": "next lint",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "cloud:migrate": "prisma migrate deploy",
+    "cloud:copy": "node scripts/copy-db-to-cloud.mjs",
     "prisma:studio": "prisma studio",
     "seed:html": "node scripts/migrate-from-html.mjs",
+    "seed:users": "node scripts/seed-users.mjs",
     "backup:db": "powershell -ExecutionPolicy Bypass -File scripts/backup-db.ps1"
   },
   "dependencies": {

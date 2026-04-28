@@ -1,0 +1,193 @@
+PROMPT CREACION DE USUARIOS - FORMATTO
+
+OBJETIVO:
+Crear usuarios en el sistema con roles, areas y generacion automatica de password.
+
+DEFINICIONES:
+- Usuario = Email
+- Roles validos: Admin, Lector, Operador
+- Cada usuario pertenece a un area
+- Password se genera automaticamente por area
+
+AREAS Y PREFIJOS PASSWORD:
+- Planificacion y Adquisiciones -> Plan
+- Produccion -> Prod
+- Armado -> Arma
+- Logistica -> Logi
+- Gerencia -> Geren
+- Instalaciones -> Insta
+
+REGLA PASSWORD:
+Formato: Prefijo + correlativo (01, 02, 03...)
+Ejemplo: Plan01, Plan02, Prod01
+
+----------------------------------------
+USUARIOS
+----------------------------------------
+
+AREA: PLANIFICACION Y ADQUISICIONES
+
+Enrique Arenas
+Email: Enrique.Arenas@formatto.cl
+Rol: Admin
+Cargo: Jefe de Planificacion de Produccion
+Password: Plan01
+
+David Reyes
+Email: david.reyes@formatto.cl
+Rol: Admin
+Cargo: Jefe de Adquisiciones y Planificacion
+Password: Plan02
+
+Karol Jorquera
+Email: Karol.Jorquera@formatto.cl
+Rol: Admin
+Cargo: Asistente de planificacion
+Password: Plan03
+
+Paola Cornejo
+Email: Paola.Cornejo@formatto.cl
+Rol: Admin
+Cargo: Asistente de planificacion
+Password: Plan04
+
+Braulio Contreras
+Email: Braulio.Contreras@formatto.cl
+Rol: Lector
+Cargo: Encargado de adquisiciones
+Password: Plan05
+
+----------------------------------------
+
+AREA: PRODUCCION
+
+Luis Venegas
+Email: luis.venegas@formatto.cl
+Rol: Lector
+Cargo: Jefe de produccion
+Password: Prod01
+
+David Elgueta
+Email: Paul.sepulveda@formatto.cl
+Rol: Lector
+Cargo: Asistente de armado
+Password: Prod02
+
+----------------------------------------
+
+AREA: ARMADO
+
+Carlos Nuñez
+Email: carlos.nuñez@formatto.cl
+Rol: Lector
+Cargo: Jefe de armado
+Password: Arma01
+
+Paul Sepulveda
+Email: Paul.sepulveda@formatto.cl
+Rol: Lector
+Cargo: Asistente de armado
+Password: Arma02
+
+----------------------------------------
+
+AREA: LOGISTICA
+
+Jorge Troncoso
+Email: jorge.troncoso@formatto.cl
+Rol: Operador
+Cargo: Jefe de logistica
+Password: Logi01
+
+Claudia Muñoz
+Email: cmunoz@formatto.cl
+Rol: Operador
+Cargo: Encargada de logistica
+Password: Logi02
+
+----------------------------------------
+
+AREA: GERENCIA
+
+Pablo Dittborn
+Email: pablo.dittborn@formatto.cl
+Rol: Lector
+Cargo: Gerente comercial
+Password: Geren01
+
+Christian San Martin
+Email: chirstian.sanmartin@formatto.cl
+Rol: Lector
+Cargo: Gerente de operaciones
+Password: Geren02
+
+----------------------------------------
+
+AREA: INSTALACIONES
+
+Victor Moreno
+Email: vmoreno@formatto.cl
+Rol: Lector
+Cargo: Jefe de instalaciones
+Password: Insta01
+
+Ana Guerrero
+Email: ana.guerrero@formatto.cl
+Rol: Lector
+Cargo: Supervisor de obra
+Password: Insta02
+
+Jose Rojas
+Email: jose.rojas@formatto.cl
+Rol: Lector
+Cargo: Supervisor de obra
+Password: Insta03
+
+Robinson Bello
+Email: Robinson.bello@formatto.cl
+Rol: Lector
+Cargo: Supervisor de obra
+Password: Insta04
+
+Marcos Catalan
+Email: Marcos.Catalan@formatto.cl
+Rol: Lector
+Cargo: Supervisor de obra
+Password: Insta05
+
+Pablo Ponce
+Email: Pablo.Ponce@formatto.cl
+Rol: Lector
+Cargo: Supervisor de obra
+Password: Insta06
+
+----------------------------------------
+
+VALIDACIONES:
+
+- No permitir emails duplicados
+- Validar roles existentes
+- Validar areas existentes
+- Normalizar emails a minusculas
+- Detectar inconsistencia:
+  * David Elgueta tiene email duplicado con Paul Sepulveda
+
+----------------------------------------
+
+SALIDA ESPERADA:
+
+- Usuarios creados correctamente
+- Usuarios rechazados
+- Duplicados detectados
+- Resumen por area
+- Resumen por rol
+
+----------------------------------------
+
+RECOMENDACIONES:
+
+- Forzar cambio de password en primer login
+- Guardar password encriptada
+- Permitir carga masiva
+
+FIN PROMPT

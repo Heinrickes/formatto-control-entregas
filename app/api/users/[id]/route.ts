@@ -1,0 +1,81 @@
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { can, forbidden, getRequestRole } from "@/lib/rbac";
+import { hashPassword } from "@/lib/passwords";
+import { normalizeEmail, userAreas } from "@/lib/users";
+
+export const dynamic = "force-dynamic";
+
+const userPatchSchema = z.object({
+  email: z.string().email().optional(),
+  fullName: z.string().min(2).optional(),
+  role: z.enum(["admin", "operador", "lector"]).optional(),
+  area: z.enum(userAreas).optional(),
+  position: z.string().optional().nullable(),
+  password: z.string().optional().nullable(),
+  active: z.boolean().optional()
+});
+
+function toPayload(user: {
+  id: string;
+  email: string;
+  fullName: string;
+  role: "admin" | "operador" | "lector";
+  area: string | null;
+  position: string | null;
+  active: boolean;
+  mustChangePassword: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    area: user.area,
+    position: user.position,
+    active: user.active,
+    mustChangePassword: user.mustChangePassword,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  const role = getRequestRole(request);
+  if (!can(role, "admin")) return forbidden("Solo admin puede editar usuarios");
+
+  const payload = userPatchSchema.parse(await request.json());
+  const data: Record<string, unknown> = {};
+  if (payload.email) data.email = normalizeEmail(payload.email);
+  if (payload.fullName) data.fullName = payload.fullName.trim();
+  if (payload.role) data.role = payload.role;
+  if (payload.area) data.area = payload.area;
+  if (payload.position !== undefined) data.position = payload.position?.trim() || null;
+  if (payload.active !== undefined) data.active = payload.active;
+  if (payload.password?.trim()) {
+    data.passwordHash = hashPassword(payload.password.trim());
+    data.mustChangePassword = true;
+  }
+
+  const user = await prisma.profile.update({
+    where: { id: params.id },
+    data
+  });
+
+  return Response.json({ user: toPayload(user) });
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  const role = getRequestRole(request);
+  if (!can(role, "admin")) return forbidden("Solo admin puede desactivar usuarios");
+
+  const user = await prisma.profile.update({
+    where: { id: params.id },
+    data: { active: false }
+  });
+
+  return Response.json({ user: toPayload(user) });
+}
