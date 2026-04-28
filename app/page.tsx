@@ -1,13 +1,15 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Edit3, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload, Users } from "lucide-react";
+import { Activity, BarChart3, ClipboardList, Download, Edit3, Eye, EyeOff, FileDown, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload, Users } from "lucide-react";
+import { SideNav } from "@/components/side-nav";
 import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
 
 const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "MARCOS CLOSET", "QUINCALLERIA", "ADICIONAL", "POST VENTA"];
 const APP_TIME_ZONE = "America/Santiago";
-const APP_TODAY = "2026-04-27";
+const APP_TODAY = "";
 
 type TaskDraft = {
   project: string;
@@ -48,6 +50,24 @@ type UserDraft = {
   position: string;
   password: string;
   active: boolean;
+};
+
+type AuditRow = {
+  id: string;
+  actorEmail: string;
+  action: string;
+  entity: string;
+  summary: string;
+  createdAt: string;
+};
+
+type PresenceRow = {
+  id: string;
+  email: string;
+  fullName: string;
+  role: Role;
+  lastSeenAt: string;
+  lastActivity?: string | null;
 };
 
 const emptyTask = (): TaskDraft => ({
@@ -207,6 +227,7 @@ export default function Home() {
   const [selected, setSelected] = useState<DispatchRow | null>(null);
   const [taskModal, setTaskModal] = useState<{ mode: "create" | "edit"; row?: DispatchRow } | null>(null);
   const [usersModal, setUsersModal] = useState(false);
+  const [auditModal, setAuditModal] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [collapsedProjects, setCollapsedProjects] = useState<string[]>([]);
   const [projectSort, setProjectSort] = useState<"prioridad" | "atraso" | "cumplimiento" | "nombre">("prioridad");
@@ -218,6 +239,13 @@ export default function Home() {
     const raw = window.localStorage.getItem("formatto-session");
     if (raw) setSession(JSON.parse(raw));
   }, []);
+
+  useEffect(() => {
+    if (session?.role === "admin" && new URLSearchParams(window.location.search).get("usuarios") === "1") {
+      setUsersModal(true);
+      window.history.replaceState({}, "", "/");
+    }
+  }, [session]);
 
   const role = session?.role ?? "lector";
   const headers = useMemo(() => ({ "Content-Type": "application/json", "x-formatto-role": role }), [role]);
@@ -246,6 +274,28 @@ export default function Home() {
   useEffect(() => {
     loadDashboard().catch(() => setMessage("No se pudo conectar con la API."));
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!session) return;
+    const heartbeat = () => {
+      fetch("/api/presence", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ activity: document.visibilityState === "visible" ? "Tablero" : "Sesion en segundo plano" })
+      }).catch(() => undefined);
+    };
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 30000);
+    return () => window.clearInterval(timer);
+  }, [headers, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const timer = window.setInterval(() => {
+      loadDashboard().catch(() => undefined);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [loadDashboard, session]);
 
   const dispatches = useMemo(() => {
     let rows = payload?.dispatches ?? [];
@@ -303,6 +353,32 @@ export default function Home() {
 
   const span = Math.max(1, Math.round((end - start) / 86400000));
   const summary = payload?.summary ?? { total: 0, dispatched: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, projects: 0, onTime: 0, late: 0, early: 0, onTimeRate: 0, lateRate: 0, earlyRate: 0 };
+  const totalBuckets = useMemo(() => {
+    const rows = payload?.dispatches ?? [];
+    const result = rows.reduce(
+      (acc, row) => {
+        if ((row.status?.state ?? "pendiente") !== "despachado") return acc;
+        const diff = businessDiffDays(row.scheduledAt, row.status?.actualAt);
+        if (diff === null) return acc;
+        if (diff > 0) acc.late++;
+        else if (diff < 0) acc.early++;
+        else acc.onTime++;
+        return acc;
+      },
+      { late: 0, onTime: 0, early: 0 }
+    );
+    const classified = result.late + result.onTime + result.early;
+    const pendingTotal = Math.max(0, rows.length - classified);
+    const rate = (value: number) => rows.length ? Math.round((value / rows.length) * 100) : 0;
+    return {
+      ...result,
+      pending: pendingTotal,
+      lateRate: rate(result.late),
+      onTimeRate: rate(result.onTime),
+      earlyRate: rate(result.early),
+      pendingRate: rate(pendingTotal)
+    };
+  }, [payload]);
   const checkedRows = useMemo(() => dispatches.filter((row) => checked.includes(row.id)), [checked, dispatches]);
   const selectedProjectPerformance = useMemo(() => {
     if (projectFilter === "todos") return null;
@@ -541,7 +617,8 @@ export default function Home() {
   }
 
   return (
-    <main className="formatto-shell">
+    <main className="formatto-shell md:pl-[58px]">
+      <SideNav role={role} />
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--g2)] bg-white px-6 py-4">
         <div className="flex items-center gap-4">
           <Image src="/formatto-logo.png" alt="Formatto" width={190} height={34} priority />
@@ -552,14 +629,15 @@ export default function Home() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button className="primary-button inline-flex items-center gap-2" disabled={busy || role !== "admin"} onClick={() => setTaskModal({ mode: "create" })}><Plus size={14} />Agregar tarea</button>
-          <label className={`thin-button inline-flex items-center gap-2 ${role !== "admin" ? "opacity-50" : ""}`}>
-            <Upload size={14} />Importar
+          <label className={`thin-button inline-flex items-center justify-center p-2 ${role !== "admin" ? "opacity-50" : ""}`} title="Importar tareas desde Excel">
+            <Upload size={16} />
             <input type="file" accept=".xlsx,.xls" className="hidden" disabled={role !== "admin"} onChange={(event) => event.target.files?.[0] && importExcel(event.target.files[0])} />
           </label>
-          {role === "admin" && <button className="thin-button inline-flex items-center gap-2" onClick={() => setUsersModal(true)}><Users size={14} />Usuarios</button>}
-          <button className="thin-button inline-flex items-center gap-2" onClick={() => loadDashboard()}><RefreshCw size={14} />Actualizar</button>
-          <a className="primary-button inline-flex items-center gap-2 no-underline" href={`/reporte${programId ? `?programId=${programId}` : ""}`} target="_blank"><Download size={14} />Exportar</a>
+          <Link className="thin-button inline-flex items-center justify-center p-2 no-underline" href="/diario" title="Reportes"><BarChart3 size={16} /></Link>
+          {role === "admin" && <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => setUsersModal(true)} title="Usuarios activos y roles"><Users size={16} /></button>}
+          {role === "admin" && <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => setAuditModal(true)} title="Bitacora de cambios"><ClipboardList size={16} /></button>}
+          <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => loadDashboard()} title="Actualizar tablero"><RefreshCw size={16} /></button>
+          <Link className="primary-button inline-flex items-center justify-center p-2 no-underline" href="/diario" title="Exportar reporte"><FileDown size={16} /></Link>
           <button className="thin-button inline-flex items-center gap-2" onClick={logout}><LogOut size={14} />{session.name}</button>
         </div>
       </header>
@@ -567,23 +645,21 @@ export default function Home() {
       {message && <div className="mx-6 mt-4 border-l-4 border-[var(--org)] bg-[#faece7] px-4 py-2 text-xs text-[#8b2500]">{message}</div>}
 
       <section className="px-6 py-4">
-          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-6">
+          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-7">
           {[
-            ["Total", summary.total],
-            ["Proyectos", summary.projects],
-            ["Despachados", summary.dispatched],
-            ["Atraso", `${summary.lateRate}%`],
-            ["On time", `${summary.onTimeRate}%`],
-            ["Adelanto", `${summary.earlyRate}%`]
-          ].map(([label, value]) => (
-            <div key={label} className="border border-[var(--g2)] border-t-[3px] border-t-[var(--org)] bg-white p-3">
-              <div className="text-[9px] uppercase tracking-[0.07em] text-[var(--mut)]">{label}</div>
-              <div className="mt-1 text-2xl font-light text-[var(--blk)]">{value}</div>
-            </div>
+            { label: "Total", value: summary.total },
+            { label: "Proyectos", value: summary.projects },
+            { label: "Despachados", value: summary.dispatched },
+            { label: "Atraso", value: `${totalBuckets.lateRate}%`, count: totalBuckets.late },
+            { label: "On time", value: `${totalBuckets.onTimeRate}%`, count: totalBuckets.onTime },
+            { label: "Adelanto", value: `${totalBuckets.earlyRate}%`, count: totalBuckets.early },
+            { label: "Pendiente", value: `${totalBuckets.pendingRate}%`, count: totalBuckets.pending }
+          ].map((item) => (
+            <DashboardMetric key={item.label} label={item.label} value={item.value} count={item.count} />
           ))}
           </div>
 
-          <div className="mb-4 grid grid-cols-1 gap-3 border border-[var(--g2)] bg-white p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+          <div className="hidden">
             <div>
               <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Proyecto</label>
               <select className="field" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
@@ -621,7 +697,7 @@ export default function Home() {
           </div>
 
           {selectedProjectPerformance && (
-            <div className="mb-4 grid grid-cols-2 gap-2 border border-[var(--g2)] bg-white p-3 md:grid-cols-6">
+            <div className="hidden">
               <div className="md:col-span-2">
                 <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Comportamiento cliente/proyecto</div>
                 <div className="text-base font-semibold">{selectedProjectPerformance.project}</div>
@@ -642,29 +718,37 @@ export default function Home() {
 
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-lg font-semibold">Tareas</div>
+              <div className="text-lg font-semibold">Panel de Control de Tareas</div>
               <div className="text-xs text-[var(--mut)]">{dispatches.length} tareas encontradas</div>
             </div>
             <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
-              <select className="field w-auto" value={projectSort} onChange={(event) => setProjectSort(event.target.value as typeof projectSort)}>
-                <option value="prioridad">Orden natural operativo</option>
-                <option value="atraso">Ordenar por atraso</option>
-                <option value="cumplimiento">Ordenar por menor cumplimiento</option>
-                <option value="nombre">Ordenar A-Z</option>
-              </select>
+              <button className="primary-button inline-flex items-center gap-2" disabled={busy || role !== "admin"} onClick={() => setTaskModal({ mode: "create" })}><Plus size={14} />Agregar tarea</button>
               <button className="thin-button" onClick={collapseAllProjects}>Colapsar todo</button>
               <button className="thin-button" onClick={expandAllProjects}>Expandir todo</button>
             </div>
-            <div className="w-full">
-              <input className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar proyecto, conjunto, piso..." />
-            </div>
         </div>
 
+        <div className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_360px]">
+          <div>
+          {selectedProjectPerformance && (
+            <div className="mb-3 grid grid-cols-2 gap-2 border border-[var(--g2)] bg-white p-3 md:grid-cols-6">
+              <div className="md:col-span-2">
+                <div className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Comportamiento cliente/proyecto</div>
+                <div className="text-base font-semibold">{selectedProjectPerformance.project}</div>
+              </div>
+              <Metric label="Despachado" value={`${selectedProjectPerformance.dispatched}/${selectedProjectPerformance.total}`} />
+              <Metric label="Cumplimiento" value={`${selectedProjectPerformance.completion}%`} />
+              <Metric label="A tiempo" value={`${selectedProjectPerformance.onTimeRate}%`} />
+              <Metric label="Atraso" value={`${selectedProjectPerformance.lateRate}%`} />
+              <Metric label="Adelanto" value={`${selectedProjectPerformance.earlyRate}%`} />
+              <Metric label="Fallos atraso" value={selectedProjectPerformance.late} />
+            </div>
+          )}
         <BulkStatusBar count={checked.length} rows={checkedRows} role={role} busy={busy} onClear={() => setChecked([])} onSave={saveBulkStatus} />
 
         <div className="overflow-x-auto border border-[var(--g2)]">
-          <div className="min-w-[980px] bg-white">
-            <div className="grid grid-cols-[38px_1.6fr_170px_160px_112px_44px] border-b border-[var(--g2)] bg-[var(--blk)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-white">
+          <div className="min-w-[720px] bg-white">
+            <div className="grid grid-cols-[32px_1.45fr_104px_104px_86px_38px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
               <button className="text-left" onClick={toggleAllVisible}>Sel</button>
               <div>Entrega</div><div>Programación</div><div>Resultado</div><div>Estado</div><div></div>
             </div>
@@ -686,19 +770,19 @@ export default function Home() {
                     state === "despachado" ? "opacity-70" : "";
                   const resultDiff = row.status?.actualAt ? businessDiffDays(row.scheduledAt, row.status.actualAt) : null;
                   return (
-                    <div key={row.id} className={`grid grid-cols-[38px_1.6fr_170px_160px_112px_44px] items-center border-t border-[var(--g2)] px-3 py-2 text-left text-[11px] hover:bg-[var(--g1)] ${rowTone}`}>
+                    <div key={row.id} className={`grid grid-cols-[32px_1.45fr_104px_104px_86px_38px] items-center border-t border-[var(--g2)] px-2 py-1.5 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
                       <input type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
                       <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
                         <div className="truncate font-semibold">{row.type} · {row.detail || "-"}</div>
-                        <div className="mt-1 text-[10px] text-[var(--mut)]">{row.units || "-"} uds</div>
+                        <div className="text-[10px] text-[var(--mut)]">{row.units || "-"} uds</div>
                       </button>
                       <button className="text-left" onClick={() => setSelected(row)}>
                         <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
-                        <div className={`mt-1 text-[11px] ${time.tone}`}>{time.label}</div>
+                        <div className={`text-[10px] ${time.tone}`}>{time.label}</div>
                       </button>
                       <button className="text-left" onClick={() => setSelected(row)}>
                         <div className="font-semibold">{shortDate(row.status?.actualAt)}</div>
-                        <div className="mt-1 text-[11px] text-[var(--mut)]">
+                        <div className="text-[10px] text-[var(--mut)]">
                           {resultDiff === null ? "Sin resultado" : resultDiff === 0 ? "En fecha" : resultDiff > 0 ? `+${resultDiff}d` : `${resultDiff}d`}
                         </div>
                       </button>
@@ -710,6 +794,28 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </div>
+          </div>
+          <OperationsSummaryPanel
+            groups={groupedDispatches}
+            rows={dispatches}
+            projects={projects}
+            typeFilter={typeFilter}
+            stateFilter={stateFilter}
+            projectFilter={projectFilter}
+            timeFilter={timeFilter}
+            onTypeFilter={setTypeFilter}
+            onStateFilter={setStateFilter}
+            onProjectFilter={setProjectFilter}
+            onTimeFilter={setTimeFilter}
+            onClearFilters={() => { setTypeFilter("todos"); setProjectFilter("todos"); setStateFilter("todos"); setTimeFilter("todos"); setSearch(""); }}
+            search={search}
+            onSearch={setSearch}
+            projectSort={projectSort}
+            onProjectSort={setProjectSort}
+            onProject={(project) => setProjectFilter((current) => current === project ? "todos" : project)}
+            onSelect={setSelected}
+          />
         </div>
       </section>
 
@@ -744,13 +850,16 @@ export default function Home() {
           onClose={() => setUsersModal(false)}
         />
       )}
+
+      {auditModal && <AuditModal headers={headers} onClose={() => setAuditModal(false)} />}
     </main>
   );
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
-  const [email, setEmail] = useState("enrique.arenas@formatto.cl");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -780,11 +889,38 @@ function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
         <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Email</label>
         <input className="field mb-3" value={email} onChange={(event) => setEmail(event.target.value)} />
         <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Clave</label>
-        <input className="field mb-4" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} />
+        <div className="mb-4 flex items-center border border-[var(--g2)] bg-white focus-within:border-[var(--blk)]">
+          <input
+            className="h-[35px] flex-1 border-0 px-3 text-sm outline-none"
+            type={showPassword ? "text" : "password"}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && submit()}
+          />
+          <button
+            className="flex h-[35px] w-[38px] items-center justify-center border-l border-[var(--g2)] text-[var(--mut)] hover:text-[var(--blk)]"
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            title={showPassword ? "Ocultar clave" : "Mostrar clave"}
+            aria-label={showPassword ? "Ocultar clave" : "Mostrar clave"}
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
         {error && <div className="mb-3 border-l-4 border-[var(--org)] bg-[#faece7] p-2 text-xs text-[#8b2500]">{error}</div>}
         <button className="primary-button w-full" disabled={busy} onClick={submit}>Ingresar</button>
       </section>
     </main>
+  );
+}
+
+function DashboardMetric({ label, value, count }: { label: string; value: string | number; count?: number }) {
+  return (
+    <div className="border border-[var(--g2)] border-t-[3px] border-t-[var(--org)] bg-white p-3">
+      <div className="text-[9px] uppercase tracking-[0.07em] text-[var(--mut)]">{label}</div>
+      <div className="mt-1 text-2xl font-light text-[var(--blk)]">{value}</div>
+      {typeof count === "number" && <div className="mt-1 text-[10px] text-[var(--mut)]">{count} tareas</div>}
+    </div>
   );
 }
 
@@ -814,6 +950,7 @@ function UsersModal({
   onClose: () => void;
 }) {
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<PresenceRow[]>([]);
   const [areas, setAreas] = useState<string[]>([]);
   const [draft, setDraft] = useState<UserDraft>(emptyUserDraft());
   const [editing, setEditing] = useState<UserRow | null>(null);
@@ -821,7 +958,10 @@ function UsersModal({
   const [error, setError] = useState("");
 
   const loadUsers = useCallback(async () => {
-    const res = await fetch("/api/users", { headers });
+    const [res, presenceRes] = await Promise.all([
+      fetch("/api/users", { headers }),
+      fetch("/api/presence", { headers })
+    ]);
     if (!res.ok) {
       setError("No se pudieron cargar los usuarios.");
       return;
@@ -829,10 +969,21 @@ function UsersModal({
     const data = await res.json();
     setUsers(data.users ?? []);
     setAreas(data.areas ?? []);
+    if (presenceRes.ok) {
+      const presenceData = await presenceRes.json();
+      setOnlineUsers(presenceData.users ?? []);
+    }
   }, [headers]);
 
   useEffect(() => {
     loadUsers().catch(() => setError("No se pudieron cargar los usuarios."));
+  }, [loadUsers]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      loadUsers().catch(() => undefined);
+    }, 30000);
+    return () => window.clearInterval(timer);
   }, [loadUsers]);
 
   function editUser(user: UserRow) {
@@ -911,6 +1062,21 @@ function UsersModal({
 
         <div className="grid gap-4 p-5 lg:grid-cols-[360px_1fr]">
           <div className="border border-[var(--g2)] p-4">
+            <div className="mb-4 border border-[var(--g2)] bg-[var(--g1)] p-3">
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.06em]"><Activity size={14} />Usuarios activos</div>
+              <div className="space-y-2">
+                {onlineUsers.map((user) => (
+                  <div key={user.id} className="flex items-center justify-between gap-2 text-[11px]">
+                    <div>
+                      <div className="font-semibold">{user.fullName}</div>
+                      <div className="text-[10px] text-[var(--mut)]">{user.lastActivity ?? "Activo"} · {shortDate(user.lastSeenAt)}</div>
+                    </div>
+                    <span className="status-badge status-despachado">online</span>
+                  </div>
+                ))}
+                {onlineUsers.length === 0 && <div className="text-xs text-[var(--mut)]">Sin usuarios activos en los ultimos minutos.</div>}
+              </div>
+            </div>
             <div className="mb-3 text-xs font-semibold uppercase tracking-[0.06em]">{editing ? "Editar usuario" : "Nuevo usuario"}</div>
             <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Nombre</label>
             <input className="field mb-2" value={draft.fullName} onChange={(event) => setDraft({ ...draft, fullName: event.target.value })} />
@@ -972,12 +1138,274 @@ function UsersModal({
   );
 }
 
+function AuditModal({ headers, onClose }: { headers: Record<string, string>; onClose: () => void }) {
+  const [logs, setLogs] = useState<AuditRow[]>([]);
+  const [userFilter, setUserFilter] = useState("");
+  const [actionFilter, setActionFilter] = useState("todos");
+  const [dateFilter, setDateFilter] = useState("");
+  const [error, setError] = useState("");
+
+  const loadAudit = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (userFilter.trim()) params.set("user", userFilter.trim());
+    if (actionFilter !== "todos") params.set("action", actionFilter);
+    if (dateFilter) params.set("date", dateFilter);
+    const res = await fetch(`/api/audit?${params.toString()}`, { headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error ?? "No se pudo cargar la bitacora.");
+      return;
+    }
+    setLogs(data.logs ?? []);
+    setError("");
+  }, [actionFilter, dateFilter, headers, userFilter]);
+
+  useEffect(() => {
+    loadAudit().catch(() => setError("No se pudo cargar la bitacora."));
+  }, [loadAudit]);
+
+  const actions = Array.from(new Set(logs.map((log) => log.action))).sort();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/40 p-4">
+      <section className="mt-8 w-full max-w-6xl border border-[var(--g2)] bg-white">
+        <div className="flex items-center justify-between border-b border-[var(--g2)] px-5 py-4">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-[0.08em]">Bitacora de cambios</h2>
+            <p className="text-xs text-[var(--mut)]">Registro administrativo de creaciones, ediciones, eliminaciones y cambios de estado.</p>
+          </div>
+          <button className="thin-button" onClick={onClose}>Cerrar</button>
+        </div>
+        <div className="grid gap-3 border-b border-[var(--g2)] p-4 md:grid-cols-[1fr_180px_160px_auto]">
+          <input className="field" value={userFilter} onChange={(event) => setUserFilter(event.target.value)} placeholder="Filtrar por usuario" />
+          <select className="field" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
+            <option value="todos">Todas las acciones</option>
+            {actions.map((action) => <option key={action} value={action}>{action}</option>)}
+          </select>
+          <input className="field" type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
+          <button className="thin-button inline-flex items-center gap-2" onClick={loadAudit}><RefreshCw size={14} />Actualizar</button>
+        </div>
+        {error && <div className="m-4 border-l-4 border-[var(--org)] bg-[#faece7] p-2 text-xs text-[#8b2500]">{error}</div>}
+        <div className="overflow-x-auto p-4">
+          <div className="min-w-[860px] border border-[var(--g2)]">
+            <div className="grid grid-cols-[150px_1.1fr_150px_130px_1.5fr] bg-[var(--blk)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-white">
+              <div>Fecha</div><div>Usuario</div><div>Accion</div><div>Entidad</div><div>Detalle</div>
+            </div>
+            {logs.map((log) => (
+              <div key={log.id} className="grid grid-cols-[150px_1.1fr_150px_130px_1.5fr] border-t border-[var(--g2)] px-3 py-2 text-[11px]">
+                <div>{shortDate(log.createdAt)}</div>
+                <div className="truncate">{log.actorEmail}</div>
+                <div><span className="status-badge status-pendiente">{log.action}</span></div>
+                <div>{log.entity}</div>
+                <div className="truncate">{log.summary}</div>
+              </div>
+            ))}
+            {logs.length === 0 && <div className="p-4 text-xs text-[var(--mut)]">Sin eventos registrados para los filtros actuales.</div>}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="border-l-2 border-[var(--org)] bg-[var(--g1)] px-3 py-2">
       <div className="text-[9px] uppercase tracking-[0.06em] text-[var(--mut)]">{label}</div>
       <div className="text-lg font-semibold">{value}</div>
     </div>
+  );
+}
+
+function OperationsSummaryPanel({
+  groups,
+  rows,
+  projects,
+  typeFilter,
+  stateFilter,
+  projectFilter,
+  timeFilter,
+  onTypeFilter,
+  onStateFilter,
+  onProjectFilter,
+  onTimeFilter,
+  onClearFilters,
+  search,
+  onSearch,
+  projectSort,
+  onProjectSort,
+  onProject,
+  onSelect
+}: {
+  groups: Array<{
+    project: string;
+    rows: DispatchRow[];
+    performance?: {
+      total: number;
+      dispatched: number;
+      completion: number;
+      onTimeRate: number;
+      lateRate: number;
+      earlyRate: number;
+      late: number;
+    };
+    pendingCritical: number;
+    delayedTasks: number;
+    upcomingTasks: number;
+    maxDelay: number;
+  }>;
+  rows: DispatchRow[];
+  projects: string[];
+  typeFilter: string;
+  stateFilter: DispatchState | "todos";
+  projectFilter: string;
+  timeFilter: "todos" | "atrasadas" | "hoy" | "proximas";
+  onTypeFilter: (value: string) => void;
+  onStateFilter: (value: DispatchState | "todos") => void;
+  onProjectFilter: (value: string) => void;
+  onTimeFilter: (value: "todos" | "atrasadas" | "hoy" | "proximas") => void;
+  onClearFilters: () => void;
+  search: string;
+  onSearch: (value: string) => void;
+  projectSort: "prioridad" | "atraso" | "cumplimiento" | "nombre";
+  onProjectSort: (value: "prioridad" | "atraso" | "cumplimiento" | "nombre") => void;
+  onProject: (project: string) => void;
+  onSelect: (row: DispatchRow) => void;
+}) {
+  const pending = rows.filter((row) => (row.status?.state ?? "pendiente") !== "despachado");
+  const dispatched = rows.filter((row) => (row.status?.state ?? "pendiente") === "despachado");
+  const lateDispatched = dispatched.filter((row) => timeState(row).value > 0).slice(0, 5);
+  const criticalAll = pending.filter((row) => timeState(row).value >= 0);
+  const critical = criticalAll.slice(0, 6);
+  const focusProjects = groups;
+  const toggleState = (state: DispatchState) => onStateFilter(stateFilter === state ? "todos" : state);
+  const toggleLate = () => {
+    onTimeFilter(timeFilter === "atrasadas" ? "todos" : "atrasadas");
+    onStateFilter("todos");
+  };
+  const projectTone = (group: typeof groups[number]) => {
+    const lateRate = group.performance?.lateRate ?? 0;
+    const earlyRate = group.performance?.earlyRate ?? 0;
+    const onTimeRate = group.performance?.onTimeRate ?? 0;
+    if (projectFilter === group.project) return "border-l-[var(--bad)] bg-[#faece7]";
+    if (group.delayedTasks > 0) return "border-l-[var(--bad)] bg-[#fff7f5]";
+    if (group.upcomingTasks > 0) return "border-l-[#55555099] bg-white";
+    if (earlyRate > 0) return "border-l-[#e9a82580] bg-white";
+    if (onTimeRate > 0) return "border-l-[#2d7a3a80] bg-white";
+    if (lateRate > 0) return "border-l-[var(--bad)] bg-[#fff7f5]";
+    return "border-l-[var(--g2)] bg-white";
+  };
+
+  return (
+    <aside className="space-y-3">
+      <section className="border border-[var(--g2)] bg-white p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Filtros</div>
+          <button className="thin-button px-2 py-1" onClick={onClearFilters}>Limpiar</button>
+        </div>
+        <div className="grid gap-2">
+          <div>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Buscar</label>
+            <input className="field" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Proyecto, conjunto, piso..." />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Orden</label>
+            <select className="field" value={projectSort} onChange={(event) => onProjectSort(event.target.value as "prioridad" | "atraso" | "cumplimiento" | "nombre")}>
+              <option value="prioridad">Orden natural operativo</option>
+              <option value="atraso">Ordenar por atraso</option>
+              <option value="cumplimiento">Menor cumplimiento</option>
+              <option value="nombre">Ordenar A-Z</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Proyecto</label>
+            <select className="field" value={projectFilter} onChange={(event) => onProjectFilter(event.target.value)}>
+              {projects.map((project) => <option key={project} value={project}>{project === "todos" ? "Todos los proyectos" : project}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Categoria</label>
+            <select className="field" value={typeFilter} onChange={(event) => onTypeFilter(event.target.value)}>
+              <option value="todos">Todas las categorias</option>
+              {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado</label>
+              <select className="field" value={stateFilter} onChange={(event) => onStateFilter(event.target.value as DispatchState | "todos")}>
+                <option value="todos">Todos</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="despachado">Despachado</option>
+                <option value="cambio">Cambio</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Tiempo</label>
+              <select className="field" value={timeFilter} onChange={(event) => onTimeFilter(event.target.value as "todos" | "atrasadas" | "hoy" | "proximas")}>
+                <option value="todos">Todos</option>
+                <option value="atrasadas">Atrasadas</option>
+                <option value="hoy">Hoy</option>
+                <option value="proximas">Proximas</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="border border-[var(--g2)] bg-white p-3">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Resumen operativo</div>
+        <div className="grid grid-cols-2 gap-2">
+          <button className="text-left" onClick={() => toggleState("pendiente")} title="Ver pendientes en la tabla"><Metric label="Pendientes" value={pending.length} /></button>
+          <button className="text-left" onClick={() => toggleState("despachado")} title="Ver despachadas en la tabla"><Metric label="Despachadas" value={dispatched.length} /></button>
+          <button className="text-left" onClick={toggleLate} title="Ver criticas en la tabla"><Metric label="Criticas" value={criticalAll.length} /></button>
+          <button className="text-left" onClick={() => onProjectFilter("todos")} title="Ver todos los proyectos"><Metric label="Proyectos" value={groups.length} /></button>
+        </div>
+      </section>
+      <section className="border border-[var(--g2)] bg-white p-3">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Foco por proyecto</div>
+        <div className="space-y-2">
+          {focusProjects.map((group) => (
+            <button key={group.project} className={`w-full border-l-4 p-2 text-left hover:bg-[#faece7] ${projectTone(group)}`} onClick={() => onProject(group.project)} title={projectFilter === group.project ? "Quitar foco del proyecto" : "Filtrar por proyecto"}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-xs font-bold">{group.project}</span>
+                <span className="text-[10px] text-[var(--mut)]">{projectFilter === group.project ? "activo" : `${group.performance?.completion ?? 0}%`}</span>
+              </div>
+              <div className="mt-1 text-[10px] text-[var(--mut)]">
+                {group.performance ? `${group.performance.dispatched}/${group.performance.total} desp.` : `${group.rows.length} tareas`}
+                {group.delayedTasks ? ` · ${group.delayedTasks} atraso` : ""}
+                {group.pendingCritical ? ` · ${group.pendingCritical} criticas` : ""}
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="border border-[var(--g2)] bg-white p-3">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Tareas criticas abiertas</div>
+        <div className="space-y-2">
+          {critical.map((row) => (
+            <button key={row.id} className="w-full bg-[#fff7f5] p-2 text-left hover:bg-[#faece7]" onClick={() => onSelect(row)}>
+              <div className="truncate text-xs font-bold">{row.project}</div>
+              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              <div className={`text-[10px] ${timeState(row).tone}`}>{timeState(row).label}</div>
+            </button>
+          ))}
+          {critical.length === 0 && <div className="text-xs text-[var(--mut)]">Sin tareas criticas abiertas.</div>}
+        </div>
+      </section>
+      <section className="hidden">
+        <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Despachadas con atraso</div>
+        <div className="space-y-2">
+          {lateDispatched.map((row) => (
+            <button key={row.id} className="w-full bg-white p-2 text-left ring-1 ring-[var(--g2)] hover:bg-[var(--g1)]" onClick={() => onSelect(row)}>
+              <div className="truncate text-xs font-bold">{row.project}</div>
+              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              <div className="text-[10px] text-[var(--bad)]">{timeState(row).label}</div>
+            </button>
+          ))}
+          {lateDispatched.length === 0 && <div className="text-xs text-[var(--mut)]">Sin despachos cerrados con atraso.</div>}
+        </div>
+      </section>
+    </aside>
   );
 }
 
@@ -1022,13 +1450,13 @@ function ProjectGroupHeader({ group, collapsed, allSelected, onToggle, onSelectA
     "border-l-[var(--g2)] bg-white";
 
   return (
-    <div className={`border-l-4 px-3 py-3 ${dominantClass}`}>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+    <div className={`border-l-4 px-2 py-2 ${dominantClass}`}>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button className="thin-button px-2 py-1" onClick={onToggle} title={collapsed ? "Expandir proyecto" : "Colapsar proyecto"}>{collapsed ? "+" : "-"}</button>
           <input type="checkbox" checked={allSelected} onChange={onSelectAll} aria-label={`Seleccionar tareas de ${group.project}`} />
           <div>
-          <div className="text-sm font-bold">{group.project}</div>
+          <div className="text-sm font-bold leading-tight">{group.project}</div>
           <div className="text-[10px] text-[var(--mut)]">
             {performance ? `${performance.dispatched}/${performance.total} despachadas` : `${group.rows.length} tareas`}
             {group.pendingCritical > 0 ? ` · ${group.pendingCritical} criticas` : ""}
@@ -1044,7 +1472,7 @@ function ProjectGroupHeader({ group, collapsed, allSelected, onToggle, onSelectA
           <span className="status-badge status-cambio">Atraso {lateRate}%</span>
         </div>
       </div>
-      <div className="flex h-2 overflow-hidden bg-[var(--g1)]">
+      <div className="flex h-1.5 overflow-hidden bg-[var(--g1)]">
         {group.delayedTasks > 0 ? (
           <div className="bg-[var(--bad)]" style={{ width: "100%" }} />
         ) : group.upcomingTasks > 0 ? (
@@ -1085,7 +1513,7 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
     <section className="border border-[var(--g2)] bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="mb-1 text-base font-semibold">Timeline de Entregas</div>
+          <div className="mb-1 text-base font-semibold">Panel de Control de Despacho</div>
           <div className="text-xs text-[var(--mut)]">4 dias atras · hoy · 4 dias adelante</div>
         </div>
         <div className="flex items-center gap-2">
@@ -1137,7 +1565,7 @@ function UrgentPanel({ items, onSelect }: { items: Array<{ row: DispatchRow; tim
   return (
     <section className="border border-[var(--g2)] bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
-        <div className="text-base font-semibold">Entregas Urgentes</div>
+        <div className="text-base font-semibold">Panel de Entregas Urgentes</div>
         <span className="status-badge status-cambio">{items.length}</span>
       </div>
       <div className="grid max-h-[260px] grid-cols-1 gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">

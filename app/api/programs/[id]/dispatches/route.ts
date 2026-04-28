@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseDateOnly } from "@/lib/dates";
-import { can, forbidden, getRequestRole } from "@/lib/rbac";
+import { writeAuditLog } from "@/lib/audit";
+import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { dispatchInputSchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const role = getRequestRole(request);
+  const user = getRequestUser(request);
   if (!can(role, "admin")) return forbidden("Solo admin puede crear despachos");
 
   const payload = dispatchInputSchema.parse(await request.json());
@@ -40,6 +42,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       status: { create: { state: "pendiente" } }
     },
     include: { status: true }
+  });
+  await writeAuditLog({
+    user,
+    action: "crear_tarea",
+    entity: "dispatch",
+    entityId: dispatch.id,
+    summary: `Creo tarea ${dispatch.project} - ${dispatch.type}`,
+    details: payload
   });
   return Response.json({ dispatch }, { status: 201 });
 }

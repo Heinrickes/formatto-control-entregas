@@ -39,9 +39,51 @@ model Profile {
   updatedAt          DateTime @updatedAt
 
   events DispatchEvent[]
+  reports ReportDelivery[]
+  presence UserPresence?
+  auditLogs AuditLog[]
 
   @@index([role])
   @@index([active])
+}
+
+model UserPresence {
+  id           String   @id @default(uuid())
+  profileId    String   @unique
+  profile      Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  email        String
+  fullName     String
+  role         Role
+  lastSeenAt   DateTime @default(now())
+  lastActivity String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([lastSeenAt])
+  @@index([role])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorId     String?
+  actor       Profile? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail  String
+  action      String
+  entity      String
+  entityId    String?
+  summary     String
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([actorEmail])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+}
+
+enum ReportDeliveryStatus {
+  enviado
+  error
 }
 
 model Program {
@@ -107,4 +149,23 @@ model DispatchEvent {
   createdAt  DateTime      @default(now())
 
   @@index([dispatchId, createdAt])
+}
+
+model ReportDelivery {
+  id          String               @id @default(uuid())
+  reportDate  DateTime
+  senderEmail String
+  senderId    String?
+  sender      Profile?             @relation(fields: [senderId], references: [id], onDelete: SetNull)
+  recipients  String[]
+  projects    String[]
+  fileName    String
+  filePath    String
+  status      ReportDeliveryStatus
+  error       String?
+  createdAt   DateTime             @default(now())
+
+  @@index([reportDate])
+  @@index([createdAt])
+  @@index([status])
 }

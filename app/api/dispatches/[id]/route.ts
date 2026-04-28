@@ -1,13 +1,15 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseDateOnly } from "@/lib/dates";
-import { can, forbidden, getRequestRole } from "@/lib/rbac";
+import { writeAuditLog } from "@/lib/audit";
+import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { dispatchInputSchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const role = getRequestRole(request);
+  const user = getRequestUser(request);
   if (!can(role, "admin")) return forbidden("Solo admin puede editar despachos");
 
   const payload = dispatchInputSchema.partial().parse(await request.json());
@@ -29,13 +31,31 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     include: { status: true }
   });
 
+  await writeAuditLog({
+    user,
+    action: "editar_tarea",
+    entity: "dispatch",
+    entityId: params.id,
+    summary: `Edito tarea ${dispatch.project} - ${dispatch.type}`,
+    details: payload
+  });
+
   return Response.json({ dispatch });
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   const role = getRequestRole(request);
+  const user = getRequestUser(request);
   if (!can(role, "admin")) return forbidden("Solo admin puede eliminar despachos");
 
-  await prisma.dispatch.delete({ where: { id: params.id } });
+  const dispatch = await prisma.dispatch.delete({ where: { id: params.id } });
+  await writeAuditLog({
+    user,
+    action: "eliminar_tarea",
+    entity: "dispatch",
+    entityId: params.id,
+    summary: `Elimino tarea ${dispatch.project} - ${dispatch.type}`,
+    details: { project: dispatch.project, type: dispatch.type, scheduledAt: dispatch.scheduledAt }
+  });
   return Response.json({ ok: true });
 }

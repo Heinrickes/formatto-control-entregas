@@ -16,6 +16,10 @@ export function getRequestRole(request: NextRequest): Role {
   return role in roleRank ? role : "lector";
 }
 
+export function getRequestUser(request: NextRequest) {
+  return verifySessionToken(request.cookies.get(getCookieName())?.value);
+}
+
 export function can(role: Role, minimum: Role) {
   return roleRank[role] >= roleRank[minimum];
 }

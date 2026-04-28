@@ -41,3 +41,7 @@ export function verifySessionToken(token?: string | null): AuthUser | null {
     return null;
   }
 }
+
+export function getRequestUserFromCookie(cookieValue?: string | null) {
+  return verifySessionToken(cookieValue);
+}

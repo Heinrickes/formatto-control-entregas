@@ -35,8 +35,7 @@ textarea {
 }
 
 .formatto-shell {
-  max-width: 1400px;
-  margin: 0 auto;
+  width: 100%;
   background: var(--wht);
   min-height: 100vh;
 }

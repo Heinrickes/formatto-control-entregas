@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { can, forbidden, getRequestRole } from "@/lib/rbac";
+import { writeAuditLog } from "@/lib/audit";
+import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { hashPassword } from "@/lib/passwords";
 import { normalizeEmail, userAreas } from "@/lib/users";
 
@@ -45,6 +46,7 @@ function toPayload(user: {
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const role = getRequestRole(request);
+  const actor = getRequestUser(request);
   if (!can(role, "admin")) return forbidden("Solo admin puede editar usuarios");
 
   const payload = userPatchSchema.parse(await request.json());
@@ -65,16 +67,35 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     data
   });
 
+  await writeAuditLog({
+    user: actor,
+    action: "editar_usuario",
+    entity: "profile",
+    entityId: user.id,
+    summary: `Edito usuario ${user.email}`,
+    details: { ...payload, password: payload.password?.trim() ? "actualizada" : undefined }
+  });
+
   return Response.json({ user: toPayload(user) });
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   const role = getRequestRole(request);
+  const actor = getRequestUser(request);
   if (!can(role, "admin")) return forbidden("Solo admin puede desactivar usuarios");
 
   const user = await prisma.profile.update({
     where: { id: params.id },
     data: { active: false }
+  });
+
+  await writeAuditLog({
+    user: actor,
+    action: "desactivar_usuario",
+    entity: "profile",
+    entityId: user.id,
+    summary: `Desactivo usuario ${user.email}`,
+    details: { email: user.email }
   });
 
   return Response.json({ user: toPayload(user) });

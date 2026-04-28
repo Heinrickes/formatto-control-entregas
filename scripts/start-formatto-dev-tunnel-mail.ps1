@@ -1,7 +1,9 @@
 param(
   [string]$Recipient = "david.reyes@formatto.cl",
   [string]$Sender = "enrique.arenas@formatto.cl",
-  [string]$LocalUrl = "http://localhost:3000"
+  [string]$LocalUrl = "http://localhost:3000",
+  [string]$RecipientUser = "david.reyes@formatto.cl",
+  [string]$RecipientPassword = "Plan02"
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +11,7 @@ $projectDir = Resolve-Path (Join-Path $PSScriptRoot "..")
 $cloudflared = Join-Path $PSScriptRoot "cloudflared.exe"
 $logPath = Join-Path $projectDir "cloudflared-tunnel.log"
 $errPath = Join-Path $projectDir "cloudflared-tunnel-error.log"
+$dockerDesktop = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 
 function Send-TunnelMail {
   param([string]$TunnelUrl)
@@ -16,6 +19,9 @@ function Send-TunnelMail {
   try {
     $outlook = New-Object -ComObject Outlook.Application
     $mail = $outlook.CreateItem(0)
+    $mail.Display()
+    Start-Sleep -Milliseconds 800
+    $signature = $mail.HTMLBody
 
     foreach ($account in $outlook.Session.Accounts) {
       if ($account.SmtpAddress -ieq $Sender) {
@@ -26,17 +32,19 @@ function Send-TunnelMail {
 
     $mail.To = $Recipient
     $mail.Subject = "Control de Entregas Formatto - enlace temporal"
-    $mail.Body = @"
-Hola,
-
-El tablero Control de Entregas esta disponible temporalmente en:
-
-$TunnelUrl
-
-Este enlace funciona mientras el equipo de Enrique mantenga abierta la app y el tunel.
-
-Saludos,
-Formatto Control de Entregas
+    $mail.HTMLBody = @"
+<div style="font-family: Arial, sans-serif; font-size: 11pt; color: #111111;">
+  <p>Hola,</p>
+  <p>El tablero esta disponible temporalmente en:</p>
+  <p><a href="$TunnelUrl" style="color: #CE4620; font-weight: 700;">Control de Entregas - Formatto</a></p>
+  <p>
+    <strong>Acceso:</strong><br>
+    Usuario: $RecipientUser<br>
+    Clave: $RecipientPassword
+  </p>
+  <p>Este enlace funciona mientras el equipo de Enrique mantenga abierta la app y el tunel.</p>
+</div>
+$signature
 "@
     $mail.Send()
     Write-Host "Correo enviado a $Recipient con el enlace $TunnelUrl" -ForegroundColor Green
@@ -53,15 +61,99 @@ function Open-MailFallback {
   param([string]$TunnelUrl)
 
   $subject = [System.Uri]::EscapeDataString("Control de Entregas Formatto - enlace temporal")
-  $body = [System.Uri]::EscapeDataString("Hola,`r`n`r`nEl tablero Control de Entregas esta disponible temporalmente en:`r`n`r`n$TunnelUrl`r`n`r`nEste enlace funciona mientras el equipo de Enrique mantenga abierta la app y el tunel.`r`n`r`nSaludos,`r`nFormatto Control de Entregas")
+  $body = [System.Uri]::EscapeDataString("Hola,`r`n`r`nEl tablero esta disponible temporalmente en:`r`nControl de Entregas - Formatto: $TunnelUrl`r`n`r`nAcceso:`r`nUsuario: $RecipientUser`r`nClave: $RecipientPassword`r`n`r`nEste enlace funciona mientras el equipo de Enrique mantenga abierta la app y el tunel.")
   Start-Process "mailto:$Recipient?subject=$subject&body=$body"
+}
+
+function Test-LocalPort {
+  param([int]$Port)
+
+  try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $async = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+    $connected = $async.AsyncWaitHandle.WaitOne(800, $false)
+    if ($connected) {
+      $client.EndConnect($async)
+    }
+    $client.Close()
+    return $connected
+  } catch {
+    return $false
+  }
+}
+
+function Test-DockerReady {
+  try {
+    docker version --format "{{.Server.Version}}" | Out-Null
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Ensure-Docker {
+  if (Test-DockerReady) {
+    Write-Host "Docker ya esta corriendo." -ForegroundColor Green
+    return
+  }
+
+  if (-not (Test-Path $dockerDesktop)) {
+    throw "Docker Desktop no esta instalado en la ruta esperada: $dockerDesktop"
+  }
+
+  Write-Host "Docker no esta corriendo. Iniciando Docker Desktop..." -ForegroundColor Yellow
+  Start-Process -FilePath $dockerDesktop -WindowStyle Hidden
+
+  $deadline = (Get-Date).AddMinutes(3)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-DockerReady) {
+      Write-Host "Docker listo." -ForegroundColor Green
+      return
+    }
+    Start-Sleep -Seconds 5
+    Write-Host "Esperando Docker..." -ForegroundColor DarkGray
+  }
+
+  throw "Docker no quedo listo despues de 3 minutos. Abre Docker Desktop manualmente y vuelve a intentar."
+}
+
+function Ensure-Supabase {
+  Write-Host "Revisando Supabase local..." -ForegroundColor Cyan
+  $healthReady = $false
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing "$LocalUrl/api/health" -TimeoutSec 4
+    $health = $response.Content | ConvertFrom-Json
+    $healthReady = $health.database -eq "up"
+  } catch {
+    $healthReady = $false
+  }
+
+  if ($healthReady) {
+    Write-Host "Base de datos disponible." -ForegroundColor Green
+    return
+  }
+
+  Write-Host "Levantando Supabase local en Docker..." -ForegroundColor Yellow
+  npx.cmd supabase start
 }
 
 Set-Location $projectDir
 
+Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 1
+
 foreach ($path in @($logPath, $errPath)) {
   if (Test-Path $path) {
-    Remove-Item -LiteralPath $path -Force
+    try {
+      Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+    } catch {
+      $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+      if ($path -eq $logPath) {
+        $logPath = Join-Path $projectDir "cloudflared-tunnel-$stamp.log"
+      } else {
+        $errPath = Join-Path $projectDir "cloudflared-tunnel-error-$stamp.log"
+      }
+    }
   }
 }
 
@@ -72,7 +164,14 @@ Write-Host "Registro: $logPath"
 Write-Host "Errores: $errPath"
 Write-Host ""
 
-Start-Process -FilePath "cmd.exe" -ArgumentList "/k", "npm.cmd run dev" -WorkingDirectory $projectDir -WindowStyle Normal
+Ensure-Docker
+Ensure-Supabase
+
+if (Test-LocalPort -Port 3000) {
+  Write-Host "La app ya esta corriendo en $LocalUrl. No se abre otro servidor." -ForegroundColor Yellow
+} else {
+  Start-Process -FilePath "cmd.exe" -ArgumentList "/k", "npm.cmd run dev" -WorkingDirectory $projectDir -WindowStyle Normal
+}
 
 Start-Sleep -Seconds 5
 

@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { can, forbidden, getRequestRole } from "@/lib/rbac";
+import { writeAuditLog } from "@/lib/audit";
+import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { hashPassword } from "@/lib/passwords";
 import { areaPrefixes, normalizeEmail, userAreas, userRoles } from "@/lib/users";
 
@@ -72,6 +73,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const role = getRequestRole(request);
+  const actor = getRequestUser(request);
   if (!can(role, "admin")) return forbidden("Solo admin puede crear usuarios");
 
   const payload = userSchema.parse(await request.json());
@@ -89,6 +91,15 @@ export async function POST(request: NextRequest) {
       mustChangePassword: true,
       active: payload.active ?? true
     }
+  });
+
+  await writeAuditLog({
+    user: actor,
+    action: "crear_usuario",
+    entity: "profile",
+    entityId: user.id,
+    summary: `Creo usuario ${user.email}`,
+    details: { email: user.email, role: user.role, area: user.area, active: user.active }
   });
 
   return Response.json({ user: toPayload(user), initialPassword: password }, { status: 201 });

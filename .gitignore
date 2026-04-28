@@ -7,5 +7,6 @@ backups
 dist
 coverage
 *.log
+reports
 supabase/.temp
 supabase/.branches
