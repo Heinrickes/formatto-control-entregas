@@ -24,8 +24,9 @@ export default async function ReportPage({ searchParams }: { searchParams: { pro
 
   const total = program.dispatches.length;
   const dispatched = program.dispatches.filter((row) => row.status?.state === "despachado").length;
+  const partial = program.dispatches.filter((row) => row.status?.state === "parcial").length;
   const changes = program.dispatches.filter((row) => row.status?.state === "cambio").length;
-  const pending = total - dispatched - changes;
+  const pending = total - dispatched - partial - changes;
   const today = new Date();
   const urgent = program.dispatches
     .filter((row) => (row.status?.state ?? "pendiente") !== "despachado")
@@ -42,14 +43,16 @@ export default async function ReportPage({ searchParams }: { searchParams: { pro
   ).map(([project, rows]) => {
     const projectTotal = rows.length;
     const projectDispatched = rows.filter((row) => row.status?.state === "despachado").length;
+    const projectPartial = rows.filter((row) => row.status?.state === "parcial").length;
     const projectChanges = rows.filter((row) => row.status?.state === "cambio").length;
-    const projectPending = projectTotal - projectDispatched - projectChanges;
+    const projectPending = projectTotal - projectDispatched - projectPartial - projectChanges;
     const openLate = rows.filter((row) => (row.status?.state ?? "pendiente") !== "despachado" && (dayDiff(row.scheduledAt, today) ?? 0) > 0).length;
     return {
       project,
       rows,
       total: projectTotal,
       dispatched: projectDispatched,
+      partial: projectPartial,
       pending: projectPending,
       changes: projectChanges,
       openLate,
@@ -66,7 +69,7 @@ export default async function ReportPage({ searchParams }: { searchParams: { pro
         <div className="mb-8 flex items-center justify-between border-b border-[var(--g2)] pb-4">
           <Image src="/formatto-logo.png" alt="Formatto" width={170} height={30} />
           <div className="text-right">
-            <h1 className="text-lg font-bold uppercase tracking-[0.06em]">Reporte de entregas</h1>
+            <h1 className="text-lg font-bold uppercase tracking-[0.06em]">Reporte de Entrega General</h1>
             <p className="text-[var(--mut)]">Emitido {toDateOnly(today)} - {program.name}</p>
             {!embedded && <div className="mt-2 print:hidden">
               <Link className="thin-button no-underline" href="/">Volver al tablero</Link>
@@ -74,8 +77,8 @@ export default async function ReportPage({ searchParams }: { searchParams: { pro
           </div>
         </div>
 
-        <section className="mb-6 grid grid-cols-5 gap-2">
-          {[["Total", total], ["Despachados", dispatched], ["Pendientes", pending], ["Cambios", changes], ["Cumplimiento", `${total ? Math.round((dispatched / total) * 100) : 0}%`]].map(([label, value]) => (
+        <section className="mb-6 grid grid-cols-6 gap-2">
+          {[["Total", total], ["Despachados", dispatched], ["Parciales", partial], ["Pendientes", pending], ["Cambios", changes], ["Cumplimiento", `${total ? Math.round((dispatched / total) * 100) : 0}%`]].map(([label, value]) => (
             <div key={label} className="border border-[var(--g2)] border-t-[3px] border-t-[var(--org)] p-3">
               <div className="text-[9px] uppercase text-[var(--mut)]">{label}</div>
               <div className="text-2xl font-semibold">{value}</div>
@@ -117,11 +120,11 @@ export default async function ReportPage({ searchParams }: { searchParams: { pro
                   <div>
                     <h3 className="text-base font-bold uppercase">{group.project}</h3>
                     <p className="text-[var(--mut)]">
-                      {group.dispatched}/{group.total} despachadas - {group.pending} pendientes - {group.openLate} atrasos abiertos
+                      {group.dispatched}/{group.total} despachadas - {group.partial} parciales - {group.pending} pendientes - {group.openLate} atrasos abiertos
                     </p>
                   </div>
                   <div className="grid grid-cols-4 gap-2 text-center">
-                    {[["Cumpl.", `${group.completion}%`], ["Total", group.total], ["Pend.", group.pending], ["Atraso", group.openLate]].map(([label, value]) => (
+                    {[["Cumpl.", `${group.completion}%`], ["Total", group.total], ["Parc.", group.partial], ["Pend.", group.pending], ["Atraso", group.openLate]].map(([label, value]) => (
                       <div key={label} className="min-w-[72px] border border-[var(--g2)] bg-white p-2">
                         <div className="text-[8px] uppercase text-[var(--mut)]">{label}</div>
                         <div className="text-sm font-bold">{value}</div>

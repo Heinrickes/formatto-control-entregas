@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
+import { PdfLite } from "@/lib/pdf-lite";
 
 const timeZone = "America/Santiago";
 
@@ -14,6 +15,7 @@ export type DailyProjectReport = {
   completed: number;
   pending: number;
   changes: number;
+  partial: number;
   lateOpen: number;
   dayProgress: number;
   accumulatedProgress: number;
@@ -54,6 +56,7 @@ export type DailyReport = {
     dayPending: number;
     pending: number;
     alerts: number;
+    partial: number;
     dayProgress: number;
     accumulatedProgress: number;
   };
@@ -154,6 +157,7 @@ export async function getDailyReport(date = todayChile()): Promise<DailyReport> 
     const todayCompleted = todayRows.filter((row) => row.status?.state === "despachado").length;
     const todayPending = todayRows.filter((row) => row.status?.state !== "despachado").length;
     const completed = projectRows.filter((row) => row.status?.state === "despachado").length;
+    const partial = projectRows.filter((row) => row.status?.state === "parcial").length;
     const changes = projectRows.filter((row) => row.status?.state === "cambio").length;
     const tasks = projectRows.map((row) => ({
       id: row.id,
@@ -165,7 +169,7 @@ export async function getDailyReport(date = todayChile()): Promise<DailyReport> 
       state: row.status?.state ?? "pendiente",
       variance: dateVariance(row.scheduledAt, row.status?.actualAt),
       responsible: row.status?.updatedBy ?? "Planificacion",
-      progress: row.status?.state === "despachado" ? "100%" : row.status?.state === "cambio" ? "Reprogramado" : "0%",
+      progress: row.status?.state === "despachado" ? "100%" : row.status?.state === "parcial" ? "Parcial" : row.status?.state === "cambio" ? "Reprogramado" : "0%",
       notes: row.status?.notes ?? null
     }));
     const alerts = [
@@ -183,6 +187,7 @@ export async function getDailyReport(date = todayChile()): Promise<DailyReport> 
       completed,
       pending: openRows.length,
       changes,
+      partial,
       lateOpen: lateOpenRows.length,
       dayProgress: pct(todayCompleted, todayRows.length),
       accumulatedProgress: pct(completed, projectRows.length),
@@ -204,6 +209,7 @@ export async function getDailyReport(date = todayChile()): Promise<DailyReport> 
   const dayCompleted = projects.reduce((sum, item) => sum + item.todayCompleted, 0);
   const dayPending = projects.reduce((sum, item) => sum + item.todayPending, 0);
   const pending = projects.reduce((sum, item) => sum + item.pending, 0);
+  const partial = projects.reduce((sum, item) => sum + item.partial, 0);
   const alerts = projects.reduce((sum, item) => sum + item.lateOpen + item.changes, 0);
   const completed = projects.reduce((sum, item) => sum + item.completed, 0);
 
@@ -217,6 +223,7 @@ export async function getDailyReport(date = todayChile()): Promise<DailyReport> 
       dayCompleted,
       dayPending,
       pending,
+      partial,
       alerts,
       dayProgress: pct(dayCompleted, dayTasks),
       accumulatedProgress: pct(completed, totalTasks)
@@ -227,173 +234,77 @@ export async function getDailyReport(date = todayChile()): Promise<DailyReport> 
 
 export function buildDailyReportPdf(report: DailyReport) {
   const reportDate = new Intl.DateTimeFormat("es-CL", { dateStyle: "long", timeZone: "UTC" }).format(ymdToUtc(report.date));
-  const commands: string[][] = [];
-  let current: string[] = [];
-  let y = 0;
+  const pdf = new PdfLite("Reporte de Entrega Diaria", `Control de Entregas - Formatto - ${reportDate}`);
 
-  const newPage = () => {
-    current = [];
-    commands.push(current);
-    y = 800;
-    current.push("0.98 0.98 0.97 rg 0 0 612 842 re f");
-    current.push("1 1 1 rg 36 36 540 770 re f");
-    current.push("0.88 0.86 0.82 RG 36 36 540 770 re S");
-    current.push("0.07 0.07 0.07 rg 36 754 540 52 re f");
-    current.push("0.81 0.27 0.13 rg 540 805 24 24 re f");
-    text("CONTROL DE ENTREGAS - FORMATTO", 50, 817, 15, "1 1 1 rg");
-    text(`Reporte Diario de Proyectos - ${reportDate}`, 50, 798, 9, "1 1 1 rg");
-    y = 724;
-  };
-
-  const ensure = (height: number) => {
-    if (y - height < 45) newPage();
-  };
-
-  function text(value: string, x: number, lineY: number, size = 9, color = "0.07 0.07 0.07 rg") {
-    current.push("BT", color, `/F1 ${size} Tf`, `${x} ${lineY} Td`, `(${escapePdf(value)}) Tj`, "ET");
-  }
-
-  function rect(x: number, rectY: number, width: number, height: number, color = "1 1 1 rg") {
-    current.push(color, `${x} ${rectY} ${width} ${height} re f`, "0.88 0.86 0.82 RG", `${x} ${rectY} ${width} ${height} re S`);
-  }
-
-  function orangeBox(x: number, rectY: number, width: number, height: number, color = "1 1 1 rg") {
-    current.push(color, `${x} ${rectY} ${width} ${height} re f`, "0.81 0.27 0.13 RG", `${x} ${rectY} ${width} ${height} re S`);
-  }
-
-  function headerBox(x: number, rectY: number, width: number, height: number) {
-    current.push("0.07 0.07 0.07 rg", `${x} ${rectY} ${width} ${height} re f`);
-  }
-
-  function card(label: string, value: string, x: number, width: number) {
-    rect(x, y - 48, width, 44);
-    current.push("0.81 0.27 0.13 RG", `${x} ${y - 8} ${width} 1 re S`);
-    text(label.toUpperCase(), x + 8, y - 22, 7, "0.45 0.45 0.45 rg");
-    text(value, x + 8, y - 40, 16);
-  }
-
-  function miniCard(label: string, value: string, x: number, top: number, width: number) {
-    rect(x, top - 34, width, 30, "0.98 0.98 0.97 rg");
-    current.push("0.81 0.27 0.13 RG", `${x} ${top - 7} ${width} 1 re S`);
-    text(label.toUpperCase(), x + 5, top - 17, 6, "0.45 0.45 0.45 rg");
-    text(value, x + 5, top - 30, 10);
-  }
-
-  function sectionTitle(value: string) {
-    ensure(28);
-    text(value.toUpperCase(), 50, y, 11);
-    current.push("0.81 0.27 0.13 RG", `50 ${y - 6} 512 1 re S`);
-    y -= 24;
-  }
-
-  newPage();
-  sectionTitle("Resumen general");
+  pdf.section("Resumen general");
   [
-    ["Proyectos", String(report.summary.activeProjects)],
+    ["Proyectos", report.summary.activeProjects],
     ["Cumpl. hoy", `${report.summary.dayProgress}%`],
-    ["Desp. hoy", String(report.summary.dayCompleted)],
-    ["Pend. hoy", String(report.summary.dayPending)],
-    ["Pend. total", String(report.summary.pending)],
-    ["Alertas", String(report.summary.alerts)]
-  ].forEach(([label, value], index) => card(label, value, 50 + index * 85, 78));
-  y -= 62;
+    ["Desp. hoy", report.summary.dayCompleted],
+    ["Parciales", report.summary.partial],
+    ["Pend. hoy", report.summary.dayPending],
+    ["Pend. total", report.summary.pending],
+    ["Alertas", report.summary.alerts]
+  ].forEach(([label, value], index) => pdf.card(String(label), String(value), 50 + index * 73, pdf.y, 66));
+  pdf.y -= 62;
 
-  sectionTitle("Detalle por proyecto");
+  let detailTitlePending = true;
   for (const project of report.projects) {
     const shownLate = Math.min(project.lateTasks.length, 5);
     const scheduledToday = project.tasks.filter((task) => task.scheduledAt === report.date);
     const shownTasks = Math.min(scheduledToday.length, 8);
-    const blockHeight = 166 + shownLate * 13 + shownTasks * 12;
-    ensure(blockHeight);
-    orangeBox(50, y - blockHeight + 10, 512, blockHeight, "1 1 1 rg");
-    const statusColor = project.lateOpen ? "0.75 0.12 0.09 rg" : "0.18 0.48 0.23 rg";
-    text(project.project, 62, y - 10, 12);
-    text(project.status, 440, y - 10, 9, statusColor);
-    miniCard("Cumpl. hoy", `${project.dayProgress}%`, 62, y - 22, 82);
-    miniCard("Cumpl. total", `${project.accumulatedProgress}%`, 154, y - 22, 82);
-    miniCard("Pendientes", String(project.pending), 246, y - 22, 82);
-    miniCard("Atrasos", String(project.lateOpen), 338, y - 22, 82);
-    miniCard("Pend. hoy", String(project.todayPending), 430, y - 22, 82);
-    text(`Observacion: ${project.observations}`, 62, y - 68, 8, "0.38 0.38 0.38 rg");
-    let rowY = y - 86;
+    const blockHeight = 150 + shownLate * 24 + Math.max(1, shownTasks) * 22;
+    if (detailTitlePending) {
+      pdf.ensure(28 + blockHeight);
+      pdf.section("Detalle por proyecto");
+      detailTitlePending = false;
+    }
+    pdf.ensure(blockHeight);
+    pdf.fill(50, pdf.y - blockHeight + 8, 512, blockHeight, "1 1 1 rg");
+    pdf.stroke(50, pdf.y - blockHeight + 8, 512, blockHeight, "0.90 0.89 0.86 RG");
+    pdf.fill(50, pdf.y - 8, project.lateOpen ? 92 : 54, 1, project.lateOpen ? "0.81 0.27 0.13 rg" : "0.86 0.85 0.82 rg");
+    pdf.wrappedText(project.project, 62, pdf.y - 23, 58, 1, 12);
+    pdf.text(project.status, 444, pdf.y - 23, 8, project.lateOpen ? "0.75 0.12 0.09 rg" : "0.18 0.48 0.23 rg");
+    [
+      ["Cumpl. hoy", `${project.dayProgress}%`],
+      ["Cumpl. total", `${project.accumulatedProgress}%`],
+      ["Pendientes", project.pending],
+      ["Parciales", project.partial],
+      ["Atrasos", project.lateOpen],
+      ["Pend. hoy", project.todayPending]
+    ].forEach(([label, value], index) => pdf.card(String(label), String(value), 62 + index * 76, pdf.y - 40, 68, 32));
+    pdf.wrappedText(`Observacion: ${project.observations}`, 62, pdf.y - 82, 108, 2, 6.5, "0.38 0.38 0.38 rg", 8);
+    let rowY = pdf.y - 106;
     if (project.lateTasks.length) {
-      text("Tareas atrasadas abiertas", 62, rowY, 8, "0.75 0.12 0.09 rg");
-      rowY -= 14;
-      headerBox(62, rowY - 4, 438, 14);
-      text("Tarea", 68, rowY, 7, "1 1 1 rg");
-      text("Uds", 312, rowY, 7, "1 1 1 rg");
-      text("Fecha", 350, rowY, 7, "1 1 1 rg");
-      text("Atraso", 412, rowY, 7, "1 1 1 rg");
-      rowY -= 16;
-      project.lateTasks.slice(0, shownLate).forEach((task) => {
-        text(`${task.type} - ${task.detail ?? "-"}`, 68, rowY, 7);
-        text(String(task.units || "-"), 312, rowY, 7);
-        text(displayDate(task.scheduledAt), 350, rowY, 7);
-        text(`${task.daysLate}d`, 412, rowY, 7, "0.75 0.12 0.09 rg");
-        rowY -= 12;
-      });
-      if (project.lateTasks.length > shownLate) text(`+ ${project.lateTasks.length - shownLate} tareas atrasadas adicionales`, 72, rowY, 7, "0.45 0.45 0.45 rg");
+      pdf.text("Tareas atrasadas abiertas", 62, rowY, 8, "0.75 0.12 0.09 rg");
       rowY -= 12;
+      pdf.tableHeader(62, rowY, [238, 38, 62, 56, 86], ["Tarea", "Uds", "Fecha", "Atraso", "Notas"]);
+      rowY -= 15;
+      project.lateTasks.slice(0, shownLate).forEach((task) => {
+        pdf.tableRow(62, rowY, [238, 38, 62, 56, 86], [`${task.type} - ${task.detail ?? "-"}`, task.units || "-", displayDate(task.scheduledAt), `${task.daysLate}d`, task.notes ?? "-"], { height: 24 });
+        rowY -= 24;
+      });
+      if (project.lateTasks.length > shownLate) pdf.text(`+ ${project.lateTasks.length - shownLate} tareas atrasadas adicionales`, 72, rowY - 8, 7, "0.45 0.45 0.45 rg");
+      rowY -= 14;
     } else {
-      text("Sin tareas atrasadas abiertas.", 62, rowY, 8, "0.38 0.38 0.38 rg");
-      rowY -= 18;
+      pdf.text("Sin tareas atrasadas abiertas.", 62, rowY, 8, "0.38 0.38 0.38 rg");
+      rowY -= 16;
     }
 
-    text("Tareas programadas del dia", 62, rowY, 8);
-    rowY -= 14;
-    headerBox(62, rowY - 4, 470, 14);
-    text("Entrega", 68, rowY, 7, "1 1 1 rg");
-    text("Uds", 228, rowY, 7, "1 1 1 rg");
-    text("Responsable", 262, rowY, 7, "1 1 1 rg");
-    text("F. prog.", 342, rowY, 7, "1 1 1 rg");
-    text("Estado", 392, rowY, 7, "1 1 1 rg");
-    text("Avance", 452, rowY, 7, "1 1 1 rg");
-    text("Desfase", 500, rowY, 7, "1 1 1 rg");
-    rowY -= 16;
+    pdf.text("Tareas programadas del dia", 62, rowY, 8);
+    rowY -= 12;
+    pdf.tableHeader(62, rowY, [158, 34, 78, 52, 58, 46, 46], ["Entrega", "Uds", "Responsable", "F. prog.", "Estado", "Avance", "Desfase"]);
+    rowY -= 15;
     scheduledToday.slice(0, shownTasks).forEach((task) => {
       const variance = task.variance === null ? "-" : task.variance === 0 ? "En fecha" : `${task.variance}d`;
-      text(`${task.type} - ${task.detail ?? "-"}`, 68, rowY, 7);
-      text(String(task.units || "-"), 228, rowY, 7);
-      text(task.responsible.slice(0, 18), 262, rowY, 7);
-      text(displayDate(task.scheduledAt), 342, rowY, 7);
-      text(task.state, 392, rowY, 7);
-      text(task.progress, 452, rowY, 7);
-      text(variance, 500, rowY, 7, task.variance && task.variance > 0 ? "0.75 0.12 0.09 rg" : "0.25 0.25 0.25 rg");
-      rowY -= 12;
+      pdf.tableRow(62, rowY, [158, 34, 78, 52, 58, 46, 46], [`${task.type} - ${task.detail ?? "-"}`, task.units || "-", task.responsible, displayDate(task.scheduledAt), task.state, task.progress, variance], { height: 22 });
+      rowY -= 22;
     });
-    if (!scheduledToday.length) text("Sin tareas programadas para la fecha del reporte.", 68, rowY, 7, "0.45 0.45 0.45 rg");
-    if (scheduledToday.length > shownTasks) text(`+ ${scheduledToday.length - shownTasks} tareas programadas adicionales`, 72, rowY, 7, "0.45 0.45 0.45 rg");
-    y -= blockHeight + 12;
+    if (!scheduledToday.length) pdf.text("Sin tareas programadas para la fecha del reporte.", 68, rowY - 10, 7, "0.45 0.45 0.45 rg");
+    if (scheduledToday.length > shownTasks) pdf.text(`+ ${scheduledToday.length - shownTasks} tareas programadas adicionales`, 72, rowY - 8, 7, "0.45 0.45 0.45 rg");
+    pdf.y -= blockHeight + 14;
   }
-
-  const objects: string[] = [];
-  const pageIds: number[] = [];
-  const fontId = 3;
-  const pagesId = 2;
-  objects.push("<< /Type /Catalog /Pages 2 0 R >>");
-  objects.push("");
-  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-
-  commands.forEach((pageCommands) => {
-    const body = pageCommands.join("\n");
-    const contentId = objects.length + 1;
-    objects.push(`<< /Length ${Buffer.byteLength(body, "latin1")} >>\nstream\n${body}\nendstream`);
-    const pageId = objects.length + 1;
-    objects.push(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
-    pageIds.push(pageId);
-  });
-  objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets[index + 1] = Buffer.byteLength(pdf, "latin1");
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xrefOffset = Buffer.byteLength(pdf, "latin1");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (let i = 1; i <= objects.length; i++) pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return Buffer.from(pdf, "latin1");
+  return pdf.output();
 }
 
 export function reportFileName(date: string) {

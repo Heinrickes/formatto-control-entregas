@@ -15,6 +15,7 @@ enum Role {
 
 enum DispatchState {
   pendiente
+  parcial
   despachado
   cambio
 }
@@ -116,12 +117,16 @@ model Dispatch {
   scheduledAt DateTime
   source      DispatchSource @default(programa)
   sortOrder   Int            @default(0)
+  parentDispatchId String?
+  parentDispatch   Dispatch?  @relation("DispatchCompletion", fields: [parentDispatchId], references: [id], onDelete: SetNull)
+  completionTasks  Dispatch[] @relation("DispatchCompletion")
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   status      DispatchStatus?
   events      DispatchEvent[]
 
   @@index([programId, project])
+  @@index([parentDispatchId])
   @@index([scheduledAt])
   @@unique([programId, legacyId])
 }

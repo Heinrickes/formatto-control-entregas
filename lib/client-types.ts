@@ -1,5 +1,5 @@
 export type Role = "admin" | "operador" | "lector";
-export type DispatchState = "pendiente" | "despachado" | "cambio";
+export type DispatchState = "pendiente" | "parcial" | "despachado" | "cambio";
 
 export type DispatchRow = {
   id: string;
@@ -14,6 +14,7 @@ export type DispatchRow = {
   scheduledAt: string;
   source: "programa" | "excel" | "manual";
   sortOrder: number;
+  parentDispatchId?: string | null;
   status?: {
     state: DispatchState;
     actualAt?: string | null;
@@ -44,6 +45,7 @@ export type DashboardPayload = {
   summary: {
     total: number;
     dispatched: number;
+    partial: number;
     pending: number;
     changes: number;
     completion: number;
@@ -60,6 +62,7 @@ export type DashboardPayload = {
     project: string;
     total: number;
     dispatched: number;
+    partial: number;
     onTime: number;
     late: number;
     early: number;

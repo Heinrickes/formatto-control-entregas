@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, BarChart3, ClipboardList, Download, Edit3, Eye, EyeOff, FileDown, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload, Users } from "lucide-react";
+import { Activity, BarChart3, ClipboardList, Download, Edit3, Eye, EyeOff, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload, Users } from "lucide-react";
 import { SideNav } from "@/components/side-nav";
 import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
 
@@ -193,6 +193,7 @@ function typeClass(type: string) {
 
 function statusClass(state: DispatchState) {
   if (state === "despachado") return "status-despachado";
+  if (state === "parcial") return "status-parcial";
   if (state === "cambio") return "status-cambio";
   return "status-pendiente";
 }
@@ -226,7 +227,6 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<DispatchRow | null>(null);
   const [taskModal, setTaskModal] = useState<{ mode: "create" | "edit"; row?: DispatchRow } | null>(null);
-  const [usersModal, setUsersModal] = useState(false);
   const [auditModal, setAuditModal] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [collapsedProjects, setCollapsedProjects] = useState<string[]>([]);
@@ -239,13 +239,6 @@ export default function Home() {
     const raw = window.localStorage.getItem("formatto-session");
     if (raw) setSession(JSON.parse(raw));
   }, []);
-
-  useEffect(() => {
-    if (session?.role === "admin" && new URLSearchParams(window.location.search).get("usuarios") === "1") {
-      setUsersModal(true);
-      window.history.replaceState({}, "", "/");
-    }
-  }, [session]);
 
   const role = session?.role ?? "lector";
   const headers = useMemo(() => ({ "Content-Type": "application/json", "x-formatto-role": role }), [role]);
@@ -352,7 +345,7 @@ export default function Home() {
   }, [dispatches]);
 
   const span = Math.max(1, Math.round((end - start) / 86400000));
-  const summary = payload?.summary ?? { total: 0, dispatched: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, projects: 0, onTime: 0, late: 0, early: 0, onTimeRate: 0, lateRate: 0, earlyRate: 0 };
+  const summary = payload?.summary ?? { total: 0, dispatched: 0, partial: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, projects: 0, onTime: 0, late: 0, early: 0, onTimeRate: 0, lateRate: 0, earlyRate: 0 };
   const totalBuckets = useMemo(() => {
     const rows = payload?.dispatches ?? [];
     const result = rows.reduce(
@@ -367,16 +360,21 @@ export default function Home() {
       },
       { late: 0, onTime: 0, early: 0 }
     );
-    const classified = result.late + result.onTime + result.early;
-    const pendingTotal = Math.max(0, rows.length - classified);
+    const partialTotal = rows.filter((row) => (row.status?.state ?? "pendiente") === "parcial").length;
+    const pendingTotal = rows.filter((row) => {
+      const state = row.status?.state ?? "pendiente";
+      return state !== "despachado" && state !== "parcial";
+    }).length;
     const rate = (value: number) => rows.length ? Math.round((value / rows.length) * 100) : 0;
     return {
       ...result,
       pending: pendingTotal,
+      partial: partialTotal,
       lateRate: rate(result.late),
       onTimeRate: rate(result.onTime),
       earlyRate: rate(result.early),
-      pendingRate: rate(pendingTotal)
+      pendingRate: rate(pendingTotal),
+      partialRate: rate(partialTotal)
     };
   }, [payload]);
   const checkedRows = useMemo(() => dispatches.filter((row) => checked.includes(row.id)), [checked, dispatches]);
@@ -526,12 +524,12 @@ export default function Home() {
     await loadDashboard();
   }
 
-  async function saveStatus(row: DispatchRow, state: DispatchState, actualAt: string, notes: string) {
+  async function saveStatus(row: DispatchRow, state: DispatchState, actualAt: string, notes: string, completionDueAt?: string) {
     setBusy(true);
     const res = await fetch(`/api/dispatches/${row.id}/status`, {
       method: "PATCH",
       headers,
-      body: JSON.stringify({ state, actualAt: actualAt || null, notes })
+      body: JSON.stringify({ state, actualAt: actualAt || null, completionDueAt: completionDueAt || null, notes })
     });
     setBusy(false);
     if (!res.ok) {
@@ -634,10 +632,9 @@ export default function Home() {
             <input type="file" accept=".xlsx,.xls" className="hidden" disabled={role !== "admin"} onChange={(event) => event.target.files?.[0] && importExcel(event.target.files[0])} />
           </label>
           <Link className="thin-button inline-flex items-center justify-center p-2 no-underline" href="/diario" title="Reportes"><BarChart3 size={16} /></Link>
-          {role === "admin" && <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => setUsersModal(true)} title="Usuarios activos y roles"><Users size={16} /></button>}
+          {role === "admin" && <Link className="thin-button inline-flex items-center justify-center p-2 no-underline" href="/usuarios" title="Usuarios activos y roles"><Users size={16} /></Link>}
           {role === "admin" && <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => setAuditModal(true)} title="Bitacora de cambios"><ClipboardList size={16} /></button>}
           <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => loadDashboard()} title="Actualizar tablero"><RefreshCw size={16} /></button>
-          <Link className="primary-button inline-flex items-center justify-center p-2 no-underline" href="/diario" title="Exportar reporte"><FileDown size={16} /></Link>
           <button className="thin-button inline-flex items-center gap-2" onClick={logout}><LogOut size={14} />{session.name}</button>
         </div>
       </header>
@@ -645,11 +642,13 @@ export default function Home() {
       {message && <div className="mx-6 mt-4 border-l-4 border-[var(--org)] bg-[#faece7] px-4 py-2 text-xs text-[#8b2500]">{message}</div>}
 
       <section className="px-6 py-4">
-          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-7">
+          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-9">
           {[
             { label: "Total", value: summary.total },
             { label: "Proyectos", value: summary.projects },
             { label: "Despachados", value: summary.dispatched },
+            { label: "Parciales", value: summary.partial },
+            { label: "Cambios", value: summary.changes },
             { label: "Atraso", value: `${totalBuckets.lateRate}%`, count: totalBuckets.late },
             { label: "On time", value: `${totalBuckets.onTimeRate}%`, count: totalBuckets.onTime },
             { label: "Adelanto", value: `${totalBuckets.earlyRate}%`, count: totalBuckets.early },
@@ -678,6 +677,7 @@ export default function Home() {
               <select className="field" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as DispatchState | "todos")}>
                 <option value="todos">Todos los estados</option>
                 <option value="pendiente">Pendiente</option>
+                <option value="parcial">Parcial</option>
                 <option value="despachado">Despachado</option>
                 <option value="cambio">Cambio</option>
               </select>
@@ -838,16 +838,6 @@ export default function Home() {
           busy={busy}
           onClose={() => setTaskModal(null)}
           onSave={(draft) => saveTask(draft, taskModal.row)}
-        />
-      )}
-
-      {usersModal && (
-        <UsersModal
-          headers={headers}
-          busy={busy}
-          setBusy={setBusy}
-          onMessage={setMessage}
-          onClose={() => setUsersModal(false)}
         />
       )}
 
@@ -1336,6 +1326,7 @@ function OperationsSummaryPanel({
               <select className="field" value={stateFilter} onChange={(event) => onStateFilter(event.target.value as DispatchState | "todos")}>
                 <option value="todos">Todos</option>
                 <option value="pendiente">Pendiente</option>
+                <option value="parcial">Parcial</option>
                 <option value="despachado">Despachado</option>
                 <option value="cambio">Cambio</option>
               </select>
@@ -1605,11 +1596,12 @@ function BulkStatusBar({ count, rows, role, busy, onClear, onSave }: {
       <div className="mr-2 text-xs font-semibold text-[var(--blk)]">{count} seleccionadas</div>
       <select className="field w-auto" value={state} disabled={disabled} onChange={(event) => setState(event.target.value as DispatchState)}>
         <option value="despachado">Despachado</option>
+        <option value="parcial">Parcial</option>
         <option value="cambio">Cambio</option>
         <option value="pendiente">Pendiente</option>
       </select>
-      <input className="field w-auto" type="date" value={actualAt} disabled={disabled || state === "pendiente"} onChange={(event) => setActualAt(event.target.value)} />
-      <input className="field min-w-[260px] flex-1" value={notes} disabled={disabled} onChange={(event) => setNotes(event.target.value)} placeholder={rows.length ? `Nota para ${rows.length} tareas` : "Selecciona tareas para actualizacion masiva"} />
+      <input className="field w-auto" type="date" value={actualAt} disabled={disabled || state === "pendiente"} onChange={(event) => setActualAt(event.target.value)} title={state === "parcial" ? "Fecha compromiso para completar" : "Fecha"} />
+      <input className="field min-w-[260px] flex-1" value={notes} disabled={disabled} onChange={(event) => setNotes(event.target.value)} placeholder={state === "parcial" ? "Motivo parcial y saldo por completar" : rows.length ? `Nota para ${rows.length} tareas` : "Selecciona tareas para actualizacion masiva"} />
       <button className="primary-button" disabled={disabled} onClick={() => onSave({ state, actualAt, notes })}>Actualizar masivo</button>
       <button className="thin-button" disabled={count === 0} onClick={onClear}>Limpiar</button>
     </div>
@@ -1677,15 +1669,21 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onSave: (row: DispatchRow, state: DispatchState, actualAt: string, notes: string) => void;
+  onSave: (row: DispatchRow, state: DispatchState, actualAt: string, notes: string, completionDueAt?: string) => void;
 }) {
   const [state, setState] = useState<DispatchState>(row.status?.state ?? "pendiente");
   const [actualAt, setActualAt] = useState(dateOnly(row.status?.actualAt));
+  const [completionDueAt, setCompletionDueAt] = useState(todayOnly());
   const [notes, setNotes] = useState(row.status?.notes ?? "");
   const diff = businessDiffDays(row.scheduledAt, actualAt);
   const readonly = role === "lector";
   const showDispatchSummary = state === "despachado" && Boolean(actualAt) && diff !== null;
   const currentTime = timeState(row);
+  function chooseState(nextState: DispatchState) {
+    setState(nextState);
+    if (nextState !== "pendiente" && !actualAt) setActualAt(todayOnly());
+    if (nextState === "parcial" && !notes.trim()) setNotes("Entrega parcial. Completar saldo pendiente.");
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
@@ -1702,17 +1700,35 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
             <div className="bg-[var(--g1)] p-3"><b>Ultima actualizacion</b><br />{shortDate(row.status?.updatedAt)}</div>
           </div>
           <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado</label>
-          <select className="field" value={state} disabled={readonly} onChange={(event) => setState(event.target.value as DispatchState)}>
-            <option value="pendiente">Pendiente</option>
-            <option value="despachado">Despachado</option>
-            <option value="cambio">Cambio</option>
-          </select>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { value: "pendiente", label: "Pendiente", help: "Aun no entregado" },
+              { value: "parcial", label: "Parcial", help: "Crea tarea para completar" },
+              { value: "despachado", label: "Despachado completo", help: "Cuenta como cumplimiento" },
+              { value: "cambio", label: "Cambio", help: "Reprogramado" }
+            ].map((option) => (
+              <label key={option.value} className={`cursor-pointer border p-3 ${state === option.value ? "border-[var(--org)] bg-[#faece7]" : "border-[var(--g2)] bg-white"} ${readonly ? "opacity-60" : ""}`}>
+                <span className="flex items-center gap-2 text-xs font-bold">
+                  <input type="radio" name="dispatch-state" checked={state === option.value} disabled={readonly} onChange={() => chooseState(option.value as DispatchState)} />
+                  {option.label}
+                </span>
+                <span className="mt-1 block text-[10px] text-[var(--mut)]">{option.help}</span>
+              </label>
+            ))}
+          </div>
           {state !== "pendiente" && (
             <>
-              <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{state === "cambio" ? "Nueva fecha propuesta" : "Fecha real de despacho"}</label>
+              <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{state === "cambio" ? "Nueva fecha propuesta" : state === "parcial" ? "Fecha de entrega parcial" : "Fecha real de despacho"}</label>
               <input className="field" type="date" value={actualAt} disabled={readonly} onChange={(event) => setActualAt(event.target.value)} />
               {diff !== null && <div className="border-l-4 border-[var(--org)] bg-[var(--g1)] p-3 text-xs"><b>{diff === 0 ? "En fecha" : diff > 0 ? `${diff} dias de atraso` : `${Math.abs(diff)} dias de adelanto`}</b></div>}
             </>
+          )}
+          {state === "parcial" && (
+            <div className="border border-[var(--g2)] bg-[#fffaf0] p-3">
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Fecha compromiso para completar</label>
+              <input className="field" type="date" value={completionDueAt} disabled={readonly} onChange={(event) => setCompletionDueAt(event.target.value)} />
+              <p className="mt-2 text-[11px] text-[var(--mut)]">Al guardar se crea una tarea pendiente Completar entrega parcial. Esa tarea entra a urgentes si corresponde.</p>
+            </div>
           )}
           {showDispatchSummary && (
             <div className="border border-[var(--g2)] bg-white">
@@ -1742,7 +1758,10 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
           <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Notas</label>
           <textarea className="field min-h-24" value={notes} disabled={readonly} onChange={(event) => setNotes(event.target.value)} />
           <div className="border-t border-[var(--g2)] pt-3">
-            <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]"><History size={13} />Historial</div>
+            <div className="mb-2 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">
+              <span className="inline-flex items-center gap-2"><History size={13} />Historial</span>
+              <Link className="thin-button px-2 py-1 no-underline" href={`/bitacora?project=${encodeURIComponent(row.project)}`}>Ver cambios</Link>
+            </div>
             {(row.events ?? []).length === 0 ? <div className="text-xs text-[var(--mut)]">Sin eventos registrados.</div> : row.events?.map((event) => (
               <div key={event.id} className="mb-2 text-xs text-[var(--mut)]">{shortDate(event.createdAt)} · {event.state} · {event.notes || "sin notas"}</div>
             ))}
@@ -1755,7 +1774,7 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
           </div>
           <div className="flex gap-2">
             <button className="thin-button" onClick={onClose}>Cancelar</button>
-            <button className="primary-button inline-flex items-center gap-2" disabled={busy || readonly} onClick={() => onSave(row, state, actualAt, notes)}><Save size={14} />Guardar estado</button>
+            <button className="primary-button inline-flex items-center gap-2" disabled={busy || readonly} onClick={() => onSave(row, state, actualAt, notes, completionDueAt)}><Save size={14} />Guardar estado</button>
           </div>
         </div>
       </div>

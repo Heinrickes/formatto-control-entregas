@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Download, Home, Mail, Plus, Printer, RefreshCw, RotateCw, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardList, Download, FileText, Home, Mail, Plus, Printer, RefreshCw, RotateCw, X } from "lucide-react";
 import { SideNav } from "@/components/side-nav";
 import type { Role } from "@/lib/client-types";
 
@@ -80,6 +80,8 @@ type UserOption = {
   active: boolean;
 };
 
+type ReportChoice = "diario" | "resumen";
+
 function todayInput() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
 }
@@ -123,6 +125,8 @@ export default function DailyPage() {
   const [recipients, setRecipients] = useState<string[]>([]);
   const [recipientModal, setRecipientModal] = useState(false);
   const [recipientDraft, setRecipientDraft] = useState("");
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [selectedReports, setSelectedReports] = useState<ReportChoice[]>(["diario"]);
   const [observations, setObservations] = useState("");
   const [message, setMessage] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<string[]>([]);
@@ -139,6 +143,11 @@ export default function DailyPage() {
   const canGenerate = role === "admin" || role === "operador";
   const canSend = role === "admin";
   const headers = useMemo(() => ({ "Content-Type": "application/json" }), []);
+  const filteredUsers = useMemo(() => {
+    const term = recipientSearch.trim().toLowerCase();
+    if (!term) return users;
+    return users.filter((user) => [user.fullName, user.email, user.area ?? "", user.role].join(" ").toLowerCase().includes(term));
+  }, [recipientSearch, users]);
 
   const load = useCallback(async () => {
     const [reportRes, historyRes] = await Promise.all([
@@ -152,7 +161,7 @@ export default function DailyPage() {
   }, [date]);
 
   useEffect(() => {
-    load().catch(() => setMessage("No se pudo cargar el reporte diario."));
+    load().catch(() => setMessage("No se pudo cargar el Reporte de Entrega Diaria."));
   }, [load]);
 
   useEffect(() => {
@@ -163,22 +172,42 @@ export default function DailyPage() {
       .catch(() => setUsers([]));
   }, [canSend]);
 
+  function openSendModal() {
+    setSelectedReports([sheet]);
+    setRecipientModal(true);
+    setMessage("");
+  }
+
   async function sendReport() {
     if (!canSend) return;
-    if (sheet === "resumen") {
-      setMessage("El resumen de entregas queda disponible para imprimir. El envio por correo se incorporara como PDF independiente en el siguiente ajuste.");
+    const draftRecipients = recipientDraft.split(/[;,\s]+/).map((item) => item.trim().toLowerCase()).filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item));
+    const targetRecipients = Array.from(new Set([...recipients, ...draftRecipients]));
+    if (targetRecipients.length === 0) {
+      setRecipientModal(true);
+      setMessage("Agrega al menos un destinatario para enviar el reporte.");
+      return;
+    }
+    if (selectedReports.length === 0) {
+      setMessage("Selecciona al menos un reporte para enviar.");
       return;
     }
     setBusy(true);
     setMessage("");
-    const res = await fetch("/api/daily-report/send", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ date, recipients, observations })
-    });
-    const data = await res.json().catch(() => ({}));
+    const results = await Promise.all(selectedReports.map(async (target) => {
+      const res = await fetch(target === "resumen" ? "/api/summary-report/send" : "/api/daily-report/send", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(target === "resumen" ? { recipients: targetRecipients, observations } : { date, recipients: targetRecipients, observations })
+      });
+      const data = await res.json().catch(() => ({}));
+      return { target, ok: res.ok, error: data.error as string | undefined };
+    }));
     setBusy(false);
-    setMessage(res.ok ? "Reporte enviado y registrado en historial." : data.error ?? "No se pudo enviar el reporte.");
+    setRecipients(targetRecipients);
+    setRecipientDraft("");
+    const failed = results.filter((result) => !result.ok);
+      setMessage(failed.length === 0 ? "Reporte enviado y registrado en historial." : failed[0].error ?? "No se pudo enviar uno de los reportes.");
+    if (failed.length === 0) setRecipientModal(false);
     await load();
   }
 
@@ -191,7 +220,6 @@ export default function DailyPage() {
     }
     setRecipients((current) => Array.from(new Set([...current, ...valid])));
     setRecipientDraft("");
-    setRecipientModal(false);
   }
 
   function removeRecipient(email: string) {
@@ -204,12 +232,17 @@ export default function DailyPage() {
 
   function selectSheet(nextSheet: "diario" | "resumen") {
     setSheet(nextSheet);
+    setSelectedReports([nextSheet]);
     window.history.replaceState({}, "", `/diario?hoja=${nextSheet}`);
+  }
+
+  function toggleReportChoice(choice: ReportChoice) {
+    setSelectedReports((current) => current.includes(choice) ? current.filter((item) => item !== choice) : [...current, choice]);
   }
 
   function printCurrentSheet() {
     if (sheet === "resumen") {
-      window.open("/reporte?print=1", "_blank", "noopener,noreferrer");
+      window.open("/api/summary-report/pdf", "_blank", "noopener,noreferrer");
       return;
     }
     window.open(`/api/daily-report/pdf?date=${date}`, "_blank", "noopener,noreferrer");
@@ -248,7 +281,7 @@ export default function DailyPage() {
       <main className="flex min-h-screen items-center justify-center bg-[var(--g1)]">
         <section className="border border-[var(--g2)] bg-white p-8">
           <Image src="/formatto-logo.png" alt="Formatto" width={190} height={34} priority />
-          <p className="mt-6 text-sm">Debes ingresar desde el tablero principal para ver el reporte diario.</p>
+          <p className="mt-6 text-sm">Debes ingresar desde el tablero principal para ver el Reporte de Entrega Diaria.</p>
           <Link className="primary-button mt-4 inline-flex no-underline" href="/">Ir al login</Link>
         </section>
       </main>
@@ -264,13 +297,14 @@ export default function DailyPage() {
           <div className="h-8 w-px bg-[var(--g2)]" />
           <div>
             <div className="text-xs font-bold uppercase tracking-[0.08em]">Reportes</div>
-            <div className="text-[10px] text-[var(--mut)]">Reporte diario, PDF, envio e historial</div>
+            <div className="text-[10px] text-[var(--mut)]">Reporte de Entrega Diaria, Reporte de Entrega General, PDF, envio e historial</div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input className="field w-auto" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => load()} title="Actualizar reportes"><RefreshCw size={16} /></button>
-          <button className={`primary-button inline-flex items-center justify-center p-2 ${!canGenerate ? "pointer-events-none opacity-50" : ""}`} onClick={printCurrentSheet} title={sheet === "diario" ? "Descargar PDF diario" : "Imprimir resumen de entregas"}><Printer size={16} /></button>
+          <button className={`primary-button inline-flex items-center justify-center p-2 ${!canGenerate ? "pointer-events-none opacity-50" : ""}`} onClick={printCurrentSheet} title={sheet === "diario" ? "Descargar Reporte de Entrega Diaria" : "Descargar Reporte de Entrega General"}><Printer size={16} /></button>
+          <button className="thin-button inline-flex items-center justify-center p-2" disabled={!canSend || busy} onClick={openSendModal} title="Enviar reportes por mail"><Mail size={16} /></button>
           <Link className="thin-button inline-flex items-center justify-center p-2 no-underline" href="/" title="Volver al tablero"><Home size={16} /></Link>
         </div>
       </header>
@@ -279,19 +313,18 @@ export default function DailyPage() {
 
       <section className="px-6 py-4">
         <div className="mb-4 flex flex-wrap gap-2 border border-[var(--g2)] bg-white p-2">
-          <button className={`${sheet === "diario" ? "primary-button" : "thin-button"} inline-flex items-center gap-2`} onClick={() => selectSheet("diario")}><Download size={14} />Reporte diario</button>
-          <button className={`${sheet === "resumen" ? "primary-button" : "thin-button"} inline-flex items-center gap-2`} onClick={() => selectSheet("resumen")}><Printer size={14} />Resumen de entregas</button>
+          <button className={`${sheet === "diario" ? "primary-button" : "thin-button"} inline-flex items-center gap-2`} onClick={() => selectSheet("diario")}><FileText size={14} />Reporte de Entrega Diaria</button>
+          <button className={`${sheet === "resumen" ? "primary-button" : "thin-button"} inline-flex items-center gap-2`} onClick={() => selectSheet("resumen")}><ClipboardList size={14} />Reporte de Entrega General</button>
         </div>
         {sheet === "resumen" ? (
           <section className="border border-[var(--g2)] bg-white">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--g2)] px-4 py-3">
               <div>
-                <h2 className="text-sm font-bold uppercase tracking-[0.06em]">Resumen de entregas</h2>
+                <h2 className="text-sm font-bold uppercase tracking-[0.06em]">Reporte de Entrega General</h2>
                 <p className="text-xs text-[var(--mut)]">Vista general imprimible del tablero activo.</p>
               </div>
-              <button className="primary-button inline-flex items-center gap-2" onClick={printCurrentSheet}><Printer size={14} />Imprimir</button>
             </div>
-            <iframe className="h-[calc(100vh-230px)] min-h-[720px] w-full border-0 bg-white" src="/reporte?embed=1" title="Resumen de entregas" />
+            <iframe className="h-[calc(100vh-230px)] min-h-[720px] w-full border-0 bg-white" src="/reporte?embed=1" title="Reporte de Entrega General" />
           </section>
         ) : (
         <>
@@ -304,7 +337,7 @@ export default function DailyPage() {
           <Metric label="Alertas" value={report?.summary.alerts ?? 0} />
         </div>
 
-        <div className="mb-6 grid gap-4 lg:grid-cols-[1fr_360px]">
+        <div className="mb-6">
           <section className="border border-[var(--g2)] bg-white">
             <div className="border-b border-[var(--g2)] px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -399,31 +432,6 @@ export default function DailyPage() {
             </div>
           </section>
 
-          <section className="border border-[var(--g2)] bg-white p-4">
-            <h2 className="text-sm font-bold uppercase tracking-[0.06em]">Enviar reporte</h2>
-            <div className="mb-2 mt-4 flex items-center justify-between gap-2">
-              <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Destinatarios</label>
-              <button className="thin-button inline-flex items-center gap-2" disabled={!canSend} onClick={() => setRecipientModal(true)}><Plus size={14} />Agregar destinatario</button>
-            </div>
-            <div className="min-h-[70px] border border-[var(--g2)] bg-[var(--g1)] p-2">
-              {recipients.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {recipients.map((email) => (
-                    <span key={email} className="inline-flex items-center gap-2 rounded border border-[var(--g2)] bg-white px-2 py-1 text-xs">
-                      {email}
-                      <button disabled={!canSend} onClick={() => removeRecipient(email)} title="Quitar destinatario"><X size={12} /></button>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-2 text-xs text-[var(--mut)]">Sin destinatarios agregados.</div>
-              )}
-            </div>
-            <label className="mb-1 mt-3 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Observaciones</label>
-            <textarea className="field min-h-[90px]" value={observations} onChange={(event) => setObservations(event.target.value)} disabled={!canSend} />
-            <button className="primary-button mt-3 inline-flex items-center gap-2" disabled={!canSend || busy || recipients.length === 0} onClick={sendReport}><Mail size={14} />Enviar PDF</button>
-            {!canSend && <p className="mt-3 text-xs text-[var(--mut)]">Solo admin puede enviar reportes por correo.</p>}
-          </section>
         </div>
 
         <section className="border border-[var(--g2)] bg-white">
@@ -456,35 +464,85 @@ export default function DailyPage() {
 
       {recipientModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <section className="w-full max-w-md border border-[var(--g2)] bg-white p-5">
+          <section className="max-h-[92vh] w-full max-w-3xl overflow-auto border border-[var(--g2)] bg-white p-5">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-bold uppercase tracking-[0.06em]">Agregar destinatario</h2>
-                <p className="text-xs text-[var(--mut)]">Puedes ingresar uno o varios correos separados por coma.</p>
+                <h2 className="text-sm font-bold uppercase tracking-[0.06em]">Enviar reportes por mail</h2>
+                <p className="text-xs text-[var(--mut)]">Selecciona uno o ambos reportes. Si eliges ambos, se generan como archivos distintos.</p>
               </div>
               <button className="thin-button p-2" onClick={() => setRecipientModal(false)}><X size={14} /></button>
             </div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Correos</label>
-            <textarea className="field min-h-[100px]" value={recipientDraft} onChange={(event) => setRecipientDraft(event.target.value)} autoFocus />
-            {users.length > 0 && (
-              <div className="mt-4">
-                <div className="mb-2 text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Usuarios del sistema</div>
-                <div className="max-h-[220px] overflow-auto border border-[var(--g2)]">
-                  {users.map((user) => (
-                    <button key={user.id} className="flex w-full items-center justify-between gap-3 border-b border-[var(--g2)] px-3 py-2 text-left text-xs hover:bg-[var(--g1)]" onClick={() => addUserRecipient(user.email)}>
-                      <span>
-                        <span className="block font-semibold">{user.fullName}</span>
-                        <span className="text-[var(--mut)]">{user.email}</span>
-                      </span>
-                      <span className="status-badge status-pendiente">{user.role}</span>
-                    </button>
-                  ))}
+
+            <div className="mb-4 grid gap-2 md:grid-cols-2">
+              <label className={`flex cursor-pointer items-center gap-3 border p-3 ${selectedReports.includes("diario") ? "border-[var(--org)] bg-[#faece7]" : "border-[var(--g2)] bg-white"}`}>
+                <input type="checkbox" checked={selectedReports.includes("diario")} onChange={() => toggleReportChoice("diario")} />
+                <FileText size={18} className="text-[var(--org)]" />
+                <span>
+                  <span className="block text-xs font-bold">Reporte de Entrega Diaria</span>
+                  <span className="block text-[10px] text-[var(--mut)]">PDF formal de la fecha seleccionada.</span>
+                </span>
+              </label>
+              <label className={`flex cursor-pointer items-center gap-3 border p-3 ${selectedReports.includes("resumen") ? "border-[var(--org)] bg-[#faece7]" : "border-[var(--g2)] bg-white"}`}>
+                <input type="checkbox" checked={selectedReports.includes("resumen")} onChange={() => toggleReportChoice("resumen")} />
+                <ClipboardList size={18} className="text-[var(--org)]" />
+                <span>
+                  <span className="block text-xs font-bold">Reporte de Entrega General</span>
+                  <span className="block text-[10px] text-[var(--mut)]">Resumen general del tablero activo.</span>
+                </span>
+              </label>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Correos</label>
+                  <button className="thin-button inline-flex items-center gap-2 px-2 py-1" onClick={addRecipients}><Plus size={13} />Agregar escrito</button>
+                </div>
+                <textarea className="field min-h-[90px]" value={recipientDraft} onChange={(event) => setRecipientDraft(event.target.value)} placeholder="correos separados por coma" autoFocus />
+                <div className="mt-3 min-h-[82px] border border-[var(--g2)] bg-[var(--g1)] p-2">
+                  {recipients.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {recipients.map((email) => (
+                        <span key={email} className="inline-flex items-center gap-2 border border-[var(--g2)] bg-white px-2 py-1 text-xs">
+                          {email}
+                          <button disabled={!canSend} onClick={() => removeRecipient(email)} title="Quitar destinatario"><X size={12} /></button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-2 text-xs text-[var(--mut)]">Sin destinatarios agregados.</div>
+                  )}
                 </div>
               </div>
-            )}
+
+              <div>
+                <div className="mb-2 text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Usuarios del sistema</div>
+                <input className="field mb-2" value={recipientSearch} onChange={(event) => setRecipientSearch(event.target.value)} placeholder="Buscar nombre, correo, area o rol" />
+                <div className="max-h-[218px] overflow-auto border border-[var(--g2)]">
+                  {filteredUsers.map((user) => {
+                    const selected = recipients.includes(user.email.toLowerCase());
+                    return (
+                      <button key={user.id} className={`flex w-full items-center justify-between gap-3 border-b border-[var(--g2)] px-3 py-2 text-left text-xs hover:bg-[var(--g1)] ${selected ? "bg-[#eef8f1]" : "bg-white"}`} onClick={() => addUserRecipient(user.email)}>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold">{user.fullName}</span>
+                          <span className="block truncate text-[var(--mut)]">{user.email}</span>
+                        </span>
+                        <span className={`status-badge ${selected ? "status-despachado" : "status-pendiente"}`}>{selected ? "agregado" : user.role}</span>
+                      </button>
+                    );
+                  })}
+                  {users.length === 0 && <div className="p-3 text-xs text-[var(--mut)]">Sin usuarios disponibles.</div>}
+                  {users.length > 0 && filteredUsers.length === 0 && <div className="p-3 text-xs text-[var(--mut)]">Sin coincidencias para la busqueda.</div>}
+                </div>
+              </div>
+            </div>
+
+            <label className="mb-1 mt-4 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Observaciones</label>
+            <textarea className="field min-h-[80px]" value={observations} onChange={(event) => setObservations(event.target.value)} disabled={!canSend} />
+
             <div className="mt-4 flex justify-end gap-2">
               <button className="thin-button" onClick={() => setRecipientModal(false)}>Cancelar</button>
-              <button className="primary-button" onClick={addRecipients}>Agregar</button>
+              <button className="primary-button inline-flex items-center gap-2" disabled={!canSend || busy || recipients.length === 0 || selectedReports.length === 0} onClick={sendReport}><Mail size={14} />Enviar</button>
             </div>
           </section>
         </div>

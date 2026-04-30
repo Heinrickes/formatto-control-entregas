@@ -12,10 +12,14 @@ export async function GET(request: NextRequest) {
   const user = request.nextUrl.searchParams.get("user")?.trim();
   const action = request.nextUrl.searchParams.get("action")?.trim();
   const date = request.nextUrl.searchParams.get("date")?.trim();
+  const dispatch = request.nextUrl.searchParams.get("dispatch")?.trim();
+  const project = request.nextUrl.searchParams.get("project")?.trim();
   const where: Prisma.AuditLogWhereInput = {};
 
   if (user) where.actorEmail = { contains: user, mode: "insensitive" };
   if (action && action !== "todos") where.action = action;
+  if (dispatch) where.entityId = dispatch;
+  if (project) where.summary = { contains: project, mode: "insensitive" };
   if (date) {
     const start = new Date(`${date}T00:00:00.000Z`);
     const end = new Date(`${date}T23:59:59.999Z`);

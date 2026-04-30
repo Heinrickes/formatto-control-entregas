@@ -57,7 +57,7 @@ No abrir el puerto 54322/PostgreSQL en el router. Solo publicar el puerto HTTP d
 Desde PowerShell normal, en la carpeta del proyecto:
 
 ```powershell
-cd "C:\Users\Enrique Arenas\Documents\New project"
+cd "C:\Users\Enrique Arenas\Documents\Control de Entregas - Formatto"
 git init
 git add .
 git commit -m "Initial Formatto control dashboard"

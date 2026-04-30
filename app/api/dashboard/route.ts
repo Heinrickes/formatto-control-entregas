@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
   if (!program) {
     return Response.json({
       program: null,
-      summary: { total: 0, dispatched: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, onTime: 0, late: 0, early: 0, onTimeRate: 0 },
+      summary: { total: 0, dispatched: 0, partial: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, onTime: 0, late: 0, early: 0, onTimeRate: 0 },
       projectPerformance: [],
       dispatches: []
     });
@@ -56,8 +56,9 @@ export async function GET(request: NextRequest) {
 
   const total = program.dispatches.length;
   const dispatched = program.dispatches.filter((d) => d.status?.state === "despachado").length;
+  const partial = program.dispatches.filter((d) => d.status?.state === "parcial").length;
   const changes = program.dispatches.filter((d) => d.status?.state === "cambio").length;
-  const pending = total - dispatched - changes;
+  const pending = total - dispatched - partial - changes;
   const diffs = program.dispatches
     .filter((d) => d.status?.state === "despachado" && d.status.actualAt)
     .map((d) => businessDiffDays(d.scheduledAt, d.status?.actualAt))
@@ -67,10 +68,11 @@ export async function GET(request: NextRequest) {
   const late = diffs.filter((value) => value > 0).length;
   const early = diffs.filter((value) => value < 0).length;
 
-  const byProject = new Map<string, { project: string; total: number; dispatched: number; onTime: number; late: number; early: number }>();
+  const byProject = new Map<string, { project: string; total: number; dispatched: number; partial: number; onTime: number; late: number; early: number }>();
   for (const dispatch of program.dispatches) {
-    const item = byProject.get(dispatch.project) ?? { project: dispatch.project, total: 0, dispatched: 0, onTime: 0, late: 0, early: 0 };
+    const item = byProject.get(dispatch.project) ?? { project: dispatch.project, total: 0, dispatched: 0, partial: 0, onTime: 0, late: 0, early: 0 };
     item.total++;
+    if (dispatch.status?.state === "parcial") item.partial++;
     if (dispatch.status?.state === "despachado") {
       item.dispatched++;
       const diff = businessDiffDays(dispatch.scheduledAt, dispatch.status.actualAt);
@@ -86,6 +88,7 @@ export async function GET(request: NextRequest) {
     summary: {
       total,
       dispatched,
+      partial,
       pending,
       changes,
       completion: total ? Math.round((dispatched / total) * 100) : 0,

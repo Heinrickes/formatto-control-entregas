@@ -3,6 +3,7 @@ node_modules
 .env
 .env.local
 .env.production.local
+.docker-cli
 backups
 dist
 coverage

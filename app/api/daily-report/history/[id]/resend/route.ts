@@ -38,11 +38,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const reportDate = new Intl.DateTimeFormat("es-CL", { dateStyle: "long", timeZone: "UTC" }).format(original.reportDate);
     await sendOutlookMail({
       recipients: payload.recipients,
-      subject: `REPORTE DE ENTREGAS ${sendDate}`,
+    subject: `REPORTE DE ENTREGA DIARIA ${sendDate}`,
       htmlBody: `
 <div style="font-family: Arial, sans-serif; font-size: 11pt; color: #111111;">
   <p>Estimado(s),</p>
-  <p>Se reenvia Reporte de Entregas correspondientes al dia ${reportDate}.</p>
+  <p>Se reenvia Reporte de Entrega Diaria correspondiente al dia ${reportDate}.</p>
   <p>Saludos,</p>
   <p style="font-weight:700; color:#CE4620;">Departamento de Planificacion</p>
   <p style="font-size:9pt; color:#777777;">Control de Entregas - Formatto</p>

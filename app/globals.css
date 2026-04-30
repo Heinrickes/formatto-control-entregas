@@ -109,6 +109,11 @@ textarea {
   background: #fef3e2;
 }
 
+.status-parcial {
+  color: #8a5a00;
+  background: #fff6d8;
+}
+
 .status-pendiente {
   color: var(--mut);
   background: var(--g1);

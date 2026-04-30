@@ -20,10 +20,14 @@ export async function PATCH(request: NextRequest) {
 
   const payload = bulkStatusSchema.parse(await request.json());
   const actualAt = parseDateOnly(payload.status.actualAt);
+  const completionDueAt = parseDateOnly(payload.status.completionDueAt) ?? actualAt ?? new Date();
 
   const result = await prisma.$transaction(async (tx) => {
     const profile = user?.email ? await tx.profile.findUnique({ where: { email: user.email } }) : null;
     for (const dispatchId of payload.ids) {
+      const dispatch = await tx.dispatch.findUnique({ where: { id: dispatchId } });
+      if (!dispatch) continue;
+
       await tx.dispatchStatus.upsert({
         where: { dispatchId },
         update: {
@@ -50,6 +54,44 @@ export async function PATCH(request: NextRequest) {
           actorId: profile?.id
         }
       });
+
+      if (payload.status.state === "parcial") {
+        const existing = await tx.dispatch.findFirst({ where: { parentDispatchId: dispatchId } });
+        if (!existing) {
+          const completionTask = await tx.dispatch.create({
+            data: {
+              programId: dispatch.programId,
+              parentDispatchId: dispatch.id,
+              project: dispatch.project,
+              type: dispatch.type,
+              detail: `Completar entrega parcial${dispatch.detail ? ` - ${dispatch.detail}` : ""}`,
+              tower: dispatch.tower,
+              core: dispatch.core,
+              floor: dispatch.floor,
+              units: dispatch.units,
+              scheduledAt: completionDueAt,
+              source: "manual",
+              sortOrder: dispatch.sortOrder + 1
+            }
+          });
+          await tx.dispatchStatus.create({
+            data: {
+              dispatchId: completionTask.id,
+              state: "pendiente",
+              notes: "Completar saldo de entrega parcial.",
+              updatedBy: user?.email ?? role
+            }
+          });
+          await tx.dispatchEvent.create({
+            data: {
+              dispatchId: completionTask.id,
+              state: "pendiente",
+              notes: "Tarea creada automaticamente para completar entrega parcial.",
+              actorId: profile?.id
+            }
+          });
+        }
+      }
     }
 
     return { updated: payload.ids.length };
@@ -60,7 +102,7 @@ export async function PATCH(request: NextRequest) {
     action: "actualizar_estado_masivo",
     entity: "dispatch",
     summary: `Actualizo ${payload.ids.length} tarea(s) a ${payload.status.state}`,
-    details: { ids: payload.ids, status: payload.status }
+    details: { ids: payload.ids, status: payload.status, completionDueAt: payload.status.completionDueAt ?? null }
   });
 
   return Response.json(result);

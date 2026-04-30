@@ -11,7 +11,7 @@ export const dispatchTypes = [
   "POST VENTA"
 ] as const;
 
-export const stateSchema = z.enum(["pendiente", "despachado", "cambio"]);
+export const stateSchema = z.enum(["pendiente", "parcial", "despachado", "cambio"]);
 
 export const dispatchInputSchema = z.object({
   id: z.string().optional(),
@@ -40,5 +40,6 @@ export const programInputSchema = z.object({
 export const statusInputSchema = z.object({
   state: stateSchema,
   actualAt: z.string().optional().nullable(),
+  completionDueAt: z.string().optional().nullable(),
   notes: z.string().optional().nullable()
 });
