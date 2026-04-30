@@ -41,17 +41,25 @@ const cloud = new PrismaClient({
 });
 
 const copy = async () => {
-  const [profiles, programs, dispatches, statuses, events] = await Promise.all([
+  const [profiles, programs, dispatches, statuses, events, reports, presence, auditLogs] = await Promise.all([
     local.profile.findMany(),
     local.program.findMany(),
     local.dispatch.findMany(),
     local.dispatchStatus.findMany(),
     local.dispatchEvent.findMany(),
+    local.reportDelivery.findMany(),
+    local.userPresence.findMany(),
+    local.auditLog.findMany(),
   ]);
 
-  console.log(`Leyendo local: ${programs.length} programas, ${dispatches.length} tareas, ${events.length} eventos.`);
+  console.log(
+    `Leyendo local: ${programs.length} programas, ${dispatches.length} tareas, ${events.length} eventos, ${auditLogs.length} bitacoras.`
+  );
 
   await cloud.$transaction([
+    cloud.auditLog.deleteMany(),
+    cloud.userPresence.deleteMany(),
+    cloud.reportDelivery.deleteMany(),
     cloud.dispatchEvent.deleteMany(),
     cloud.dispatchStatus.deleteMany(),
     cloud.dispatch.deleteMany(),
@@ -79,7 +87,21 @@ const copy = async () => {
     await cloud.dispatchEvent.createMany({ data: events });
   }
 
-  console.log(`Copia cloud terminada: ${programs.length} programas, ${dispatches.length} tareas, ${statuses.length} estados.`);
+  if (reports.length) {
+    await cloud.reportDelivery.createMany({ data: reports });
+  }
+
+  if (presence.length) {
+    await cloud.userPresence.createMany({ data: presence });
+  }
+
+  if (auditLogs.length) {
+    await cloud.auditLog.createMany({ data: auditLogs });
+  }
+
+  console.log(
+    `Copia cloud terminada: ${programs.length} programas, ${dispatches.length} tareas, ${statuses.length} estados, ${auditLogs.length} bitacoras.`
+  );
 };
 
 copy()
