@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -7,7 +7,7 @@ import { Activity, BarChart3, ClipboardList, Download, Edit3, Eye, EyeOff, Histo
 import { SideNav } from "@/components/side-nav";
 import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
 
-const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "MARCOS CLOSET", "QUINCALLERIA", "ADICIONAL", "POST VENTA"];
+const dispatchTypes = ["COCINA", "CLOSET", "BAÃ‘O", "PUERTAS ABATIR", "MARCOS CLOSET", "QUINCALLERIA", "ADICIONAL", "POST VENTA"];
 const APP_TIME_ZONE = "America/Santiago";
 const APP_TODAY = "";
 
@@ -184,7 +184,7 @@ function taskPriority(row: DispatchRow) {
 function typeClass(type: string) {
   if (type === "COCINA") return "bg-[var(--org)]";
   if (type === "CLOSET") return "bg-[var(--blk)]";
-  if (type === "BAÑO") return "bg-[#5a5a5a]";
+  if (type === "BAÃ‘O") return "bg-[#5a5a5a]";
   if (type === "MARCOS CLOSET") return "bg-[#7b5ea7]";
   if (type === "QUINCALLERIA") return "bg-[#2e86ab]";
   if (type === "ADICIONAL") return "bg-[#e9a825]";
@@ -573,17 +573,32 @@ export default function Home() {
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
     const targetProgramId = await ensureProgram();
     let created = 0;
+    let skipped = 0;
 
     for (const row of rows) {
       const get = (...keys: string[]) => {
-        const found = Object.keys(row).find((key) => keys.some((candidate) => key.toLowerCase().includes(candidate)));
+        const normalize = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const found = Object.keys(row).find((key) => keys.some((candidate) => normalize(key).includes(normalize(candidate))));
         return found ? String(row[found] ?? "").trim() : "";
       };
       const project = get("proyecto");
       const scheduledAt = get("fecha despacho", "fecha");
-      if (!project || !scheduledAt) continue;
+      if (!project || !scheduledAt) {
+        skipped++;
+        continue;
+      }
       const date = scheduledAt.length >= 10 ? scheduledAt.slice(0, 10) : dateOnly(new Date(scheduledAt).toISOString());
-      const detail = [get("torre"), get("piso"), get("observacion", "obs")].filter(Boolean).join(" · ");
+      const tower = get("torre");
+      const core = get("nucleo", "nucleos", "núcleo", "núcleos");
+      const floor = get("piso");
+      const observation = get("observacion", "observación", "obs");
+      const units = Number(get("deptos/casas", "depto/casa", "deptos", "depto", "casas", "casa", "unidades")) || 0;
+      const detail = [
+        tower ? `Torre ${tower}` : "",
+        core ? `Nucleo ${core}` : "",
+        floor ? `Piso ${floor}` : "",
+        observation
+      ].filter(Boolean).join(" · ");
       const res = await fetch(`/api/programs/${targetProgramId}/dispatches`, {
         method: "POST",
         headers,
@@ -591,7 +606,10 @@ export default function Home() {
           project,
           type: get("tipo", "conjunto") || "COCINA",
           detail,
-          units: Number(get("depto", "deptos", "casas")) || 0,
+          tower: tower || null,
+          core: core || null,
+          floor: floor || null,
+          units,
           scheduledAt: date,
           source: "excel"
         })
@@ -600,7 +618,7 @@ export default function Home() {
     }
 
     setBusy(false);
-    setMessage(`Importadas ${created} tareas al tablero actual.`);
+    setMessage(`Importadas ${created} tareas al tablero actual.${skipped ? ` ${skipped} filas omitidas por falta de proyecto o fecha.` : ""}`);
     await loadDashboard(targetProgramId);
   }
 
@@ -666,9 +684,9 @@ export default function Home() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Categoría</label>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">CategorÃ­a</label>
               <select className="field" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
-                <option value="todos">Todas las categorías</option>
+                <option value="todos">Todas las categorÃ­as</option>
                 {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
               </select>
             </div>
@@ -688,7 +706,7 @@ export default function Home() {
                 <option value="todos">Todo el calendario</option>
                 <option value="atrasadas">Atrasadas</option>
                 <option value="hoy">Hoy</option>
-                <option value="proximas">Próximos 7 días</option>
+                <option value="proximas">PrÃ³ximos 7 dÃ­as</option>
               </select>
             </div>
             <div className="flex items-end">
@@ -750,7 +768,7 @@ export default function Home() {
           <div className="min-w-[720px] bg-white">
             <div className="grid grid-cols-[32px_1.45fr_104px_104px_86px_38px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
               <button className="text-left" onClick={toggleAllVisible}>Sel</button>
-              <div>Entrega</div><div>Programación</div><div>Resultado</div><div>Estado</div><div></div>
+              <div>Entrega</div><div>ProgramaciÃ³n</div><div>Resultado</div><div>Estado</div><div></div>
             </div>
             {groupedDispatches.map((group) => (
               <div key={group.project} className="border-b border-[var(--g2)]">
@@ -773,7 +791,7 @@ export default function Home() {
                     <div key={row.id} className={`grid grid-cols-[32px_1.45fr_104px_104px_86px_38px] items-center border-t border-[var(--g2)] px-2 py-1.5 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
                       <input type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
                       <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
-                        <div className="truncate font-semibold">{row.type} · {row.detail || "-"}</div>
+                        <div className="truncate font-semibold">{row.type} Â· {row.detail || "-"}</div>
                         <div className="text-[10px] text-[var(--mut)]">{row.units || "-"} uds</div>
                       </button>
                       <button className="text-left" onClick={() => setSelected(row)}>
@@ -1059,7 +1077,7 @@ function UsersModal({
                   <div key={user.id} className="flex items-center justify-between gap-2 text-[11px]">
                     <div>
                       <div className="font-semibold">{user.fullName}</div>
-                      <div className="text-[10px] text-[var(--mut)]">{user.lastActivity ?? "Activo"} · {shortDate(user.lastSeenAt)}</div>
+                      <div className="text-[10px] text-[var(--mut)]">{user.lastActivity ?? "Activo"} Â· {shortDate(user.lastSeenAt)}</div>
                     </div>
                     <span className="status-badge status-despachado">online</span>
                   </div>
@@ -1363,8 +1381,8 @@ function OperationsSummaryPanel({
               </div>
               <div className="mt-1 text-[10px] text-[var(--mut)]">
                 {group.performance ? `${group.performance.dispatched}/${group.performance.total} desp.` : `${group.rows.length} tareas`}
-                {group.delayedTasks ? ` · ${group.delayedTasks} atraso` : ""}
-                {group.pendingCritical ? ` · ${group.pendingCritical} criticas` : ""}
+                {group.delayedTasks ? ` Â· ${group.delayedTasks} atraso` : ""}
+                {group.pendingCritical ? ` Â· ${group.pendingCritical} criticas` : ""}
               </div>
             </button>
           ))}
@@ -1376,7 +1394,7 @@ function OperationsSummaryPanel({
           {critical.map((row) => (
             <button key={row.id} className="w-full bg-[#fff7f5] p-2 text-left hover:bg-[#faece7]" onClick={() => onSelect(row)}>
               <div className="truncate text-xs font-bold">{row.project}</div>
-              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} Â· {row.detail || "-"}</div>
               <div className={`text-[10px] ${timeState(row).tone}`}>{timeState(row).label}</div>
             </button>
           ))}
@@ -1389,7 +1407,7 @@ function OperationsSummaryPanel({
           {lateDispatched.map((row) => (
             <button key={row.id} className="w-full bg-white p-2 text-left ring-1 ring-[var(--g2)] hover:bg-[var(--g1)]" onClick={() => onSelect(row)}>
               <div className="truncate text-xs font-bold">{row.project}</div>
-              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} Â· {row.detail || "-"}</div>
               <div className="text-[10px] text-[var(--bad)]">{timeState(row).label}</div>
             </button>
           ))}
@@ -1450,9 +1468,9 @@ function ProjectGroupHeader({ group, collapsed, allSelected, onToggle, onSelectA
           <div className="text-sm font-bold leading-tight">{group.project}</div>
           <div className="text-[10px] text-[var(--mut)]">
             {performance ? `${performance.dispatched}/${performance.total} despachadas` : `${group.rows.length} tareas`}
-            {group.pendingCritical > 0 ? ` · ${group.pendingCritical} criticas` : ""}
-            {group.delayedTasks > 0 ? ` · ${group.delayedTasks} con atraso` : ""}
-            {group.maxDelay > 0 ? ` · max ${group.maxDelay}d atraso` : ""}
+            {group.pendingCritical > 0 ? ` Â· ${group.pendingCritical} criticas` : ""}
+            {group.delayedTasks > 0 ? ` Â· ${group.delayedTasks} con atraso` : ""}
+            {group.maxDelay > 0 ? ` Â· max ${group.maxDelay}d atraso` : ""}
           </div>
           </div>
         </div>
@@ -1505,7 +1523,7 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="mb-1 text-base font-semibold">Panel de Control de Despacho</div>
-          <div className="text-xs text-[var(--mut)]">4 dias atras · hoy · 4 dias adelante</div>
+          <div className="text-xs text-[var(--mut)]">4 dias atras Â· hoy Â· 4 dias adelante</div>
         </div>
         <div className="flex items-center gap-2">
           <button className="thin-button" onClick={() => onMove(offset - 1)}>Anterior</button>
@@ -1536,7 +1554,7 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
                     return (
                       <button key={row.id} className="bg-white px-2 py-1 text-left shadow-sm hover:outline hover:outline-1 hover:outline-[var(--org)]" onClick={() => onSelect(row)}>
                         <div className="truncate text-[10px] font-bold text-[var(--org)]">{row.project}</div>
-                        <div className="truncate text-[9px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+                        <div className="truncate text-[9px] text-[var(--mut)]">{row.type} Â· {row.detail || "-"}</div>
                         <div className={`text-[9px] ${time.tone}`}>{time.label}</div>
                       </button>
                     );
@@ -1566,11 +1584,11 @@ function UrgentPanel({ items, onSelect }: { items: Array<{ row: DispatchRow; tim
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-semibold">{row.project}</div>
-                <div className="text-[11px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+                <div className="text-[11px] text-[var(--mut)]">{row.type} Â· {row.detail || "-"}</div>
               </div>
               <span className="status-badge status-cambio">{time.label}</span>
             </div>
-            <div className="mt-3 text-[11px] text-[var(--mut)]">{shortDate(row.scheduledAt)} · {row.units || "-"} uds</div>
+            <div className="mt-3 text-[11px] text-[var(--mut)]">{shortDate(row.scheduledAt)} Â· {row.units || "-"} uds</div>
           </button>
         ))}
       </div>
@@ -1689,8 +1707,8 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
       <div className="max-h-[92vh] w-[480px] max-w-full overflow-y-auto bg-white" onClick={(event) => event.stopPropagation()}>
         <div className="border-b border-[var(--g2)] px-5 py-4">
-          <div className="text-sm font-bold uppercase tracking-[0.04em]">{row.project} · {row.type}</div>
-          <div className="text-[11px] text-[var(--mut)]">{row.detail || "-"} · Programado {shortDate(row.scheduledAt)}</div>
+          <div className="text-sm font-bold uppercase tracking-[0.04em]">{row.project} Â· {row.type}</div>
+          <div className="text-[11px] text-[var(--mut)]">{row.detail || "-"} Â· Programado {shortDate(row.scheduledAt)}</div>
         </div>
         <div className="space-y-3 px-5 py-4">
           <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -1763,7 +1781,7 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
               <Link className="thin-button px-2 py-1 no-underline" href={`/bitacora?project=${encodeURIComponent(row.project)}`}>Ver cambios</Link>
             </div>
             {(row.events ?? []).length === 0 ? <div className="text-xs text-[var(--mut)]">Sin eventos registrados.</div> : row.events?.map((event) => (
-              <div key={event.id} className="mb-2 text-xs text-[var(--mut)]">{shortDate(event.createdAt)} · {event.state} · {event.notes || "sin notas"}</div>
+              <div key={event.id} className="mb-2 text-xs text-[var(--mut)]">{shortDate(event.createdAt)} Â· {event.state} Â· {event.notes || "sin notas"}</div>
             ))}
           </div>
         </div>
@@ -1781,3 +1799,4 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
     </div>
   );
 }
+

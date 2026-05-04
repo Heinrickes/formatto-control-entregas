@@ -110,6 +110,20 @@ npm.cmd run dev
 - `/bitacora` historial de cambios
 - `/api/health` salud de app/base
 
+## Importacion Masiva
+
+La estructura oficial para cargas Excel esta documentada en:
+
+```text
+docs/importacion-masiva.md
+```
+
+Plantilla base:
+
+```text
+docs/plantilla-importacion-entregas.csv
+```
+
 ## Seguridad
 
 - No subir `.env`, `.env.local`, respaldos, logs ni reportes generados.
