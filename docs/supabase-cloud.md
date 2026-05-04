@@ -81,9 +81,11 @@ npm.cmd run dev
 Variables necesarias:
 
 ```env
-DATABASE_URL="postgres://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres"
+DATABASE_URL="postgres://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require&pgbouncer=true&connection_limit=1&schema=control_entregas"
+NEXT_PUBLIC_SUPABASE_URL="https://PROJECT_REF.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="SUPABASE_ANON_KEY"
 FORMATTO_AUTH_SECRET="un-secreto-largo"
-FORMATTO_USERS="admin@formatto.cl:clave:admin:Administrador Formatto,operador@formatto.cl:clave:operador:Operador Formatto,lector@formatto.cl:clave:lector:Lector Formatto"
+FORMATTO_USERS=""
 ```
 
-La autenticacion actual es suficiente para una primera version privada. Mas adelante conviene migrarla a Supabase Auth para administrar usuarios desde el panel de Supabase.
+No usar `FORMATTO_DEV_ROLE` en Vercel. La autenticacion actual usa los usuarios guardados en la tabla `Profile`. Mas adelante conviene migrarla a Supabase Auth para administrar usuarios desde el panel de Supabase.
