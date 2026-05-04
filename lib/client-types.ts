@@ -1,9 +1,11 @@
 export type Role = "admin" | "operador" | "lector";
 export type DispatchState = "pendiente" | "parcial" | "despachado" | "cambio";
+export type BusinessLine = "Constructora" | "Particulares" | "Retail" | "Convenio Marco";
 
 export type DispatchRow = {
   id: string;
   legacyId?: number | null;
+  businessLine: BusinessLine;
   project: string;
   type: string;
   detail?: string | null;
@@ -70,6 +72,15 @@ export type DashboardPayload = {
     onTimeRate: number;
     lateRate: number;
     earlyRate: number;
+  }>;
+  businessLinePerformance?: Array<{
+    businessLine: BusinessLine | string;
+    total: number;
+    dispatched: number;
+    partial: number;
+    pending: number;
+    changes: number;
+    completion: number;
   }>;
   dispatches: DispatchRow[];
 };

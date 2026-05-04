@@ -50,6 +50,7 @@ export async function GET(request: NextRequest) {
       program: null,
       summary: { total: 0, dispatched: 0, partial: 0, pending: 0, changes: 0, completion: 0, averageDelay: null, onTime: 0, late: 0, early: 0, onTimeRate: 0 },
       projectPerformance: [],
+      businessLinePerformance: [],
       dispatches: []
     });
   }
@@ -69,8 +70,18 @@ export async function GET(request: NextRequest) {
   const early = diffs.filter((value) => value < 0).length;
 
   const byProject = new Map<string, { project: string; total: number; dispatched: number; partial: number; onTime: number; late: number; early: number }>();
+  const byBusinessLine = new Map<string, { businessLine: string; total: number; dispatched: number; partial: number; pending: number; changes: number }>();
   for (const dispatch of program.dispatches) {
     const item = byProject.get(dispatch.project) ?? { project: dispatch.project, total: 0, dispatched: 0, partial: 0, onTime: 0, late: 0, early: 0 };
+    const lineName = dispatch.businessLine || "Constructora";
+    const lineItem = byBusinessLine.get(lineName) ?? { businessLine: lineName, total: 0, dispatched: 0, partial: 0, pending: 0, changes: 0 };
+    lineItem.total++;
+    if (dispatch.status?.state === "despachado") lineItem.dispatched++;
+    else if (dispatch.status?.state === "parcial") lineItem.partial++;
+    else if (dispatch.status?.state === "cambio") lineItem.changes++;
+    else lineItem.pending++;
+    byBusinessLine.set(lineName, lineItem);
+
     item.total++;
     if (dispatch.status?.state === "parcial") item.partial++;
     if (dispatch.status?.state === "despachado") {
@@ -107,6 +118,10 @@ export async function GET(request: NextRequest) {
       onTimeRate: item.dispatched ? Math.round((item.onTime / item.dispatched) * 100) : 0,
       lateRate: item.dispatched ? Math.round((item.late / item.dispatched) * 100) : 0,
       earlyRate: item.dispatched ? Math.round((item.early / item.dispatched) * 100) : 0
+    })),
+    businessLinePerformance: Array.from(byBusinessLine.values()).map((item) => ({
+      ...item,
+      completion: item.total ? Math.round((item.dispatched / item.total) * 100) : 0
     })),
     dispatches: program.dispatches
   });

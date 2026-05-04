@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
         dispatches: {
           create: payload.dispatches.map((dispatch, index) => ({
             legacyId: dispatch.legacyId ?? null,
+            businessLine: dispatch.businessLine,
             project: dispatch.project,
             type: dispatch.type,
             detail: dispatch.detail ?? null,

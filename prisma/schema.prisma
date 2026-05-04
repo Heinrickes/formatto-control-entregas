@@ -107,6 +107,7 @@ model Dispatch {
   legacyId    Int?
   programId   String
   program     Program        @relation(fields: [programId], references: [id], onDelete: Cascade)
+  businessLine String         @default("Constructora")
   project     String
   type        String
   detail      String?
@@ -125,6 +126,7 @@ model Dispatch {
   status      DispatchStatus?
   events      DispatchEvent[]
 
+  @@index([programId, businessLine])
   @@index([programId, project])
   @@index([parentDispatchId])
   @@index([scheduledAt])

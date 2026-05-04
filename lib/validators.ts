@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const businessLines = ["Constructora", "Particulares", "Retail", "Convenio Marco"] as const;
+
 export const dispatchTypes = [
   "COCINA",
   "CLOSET",
@@ -12,10 +14,12 @@ export const dispatchTypes = [
 ] as const;
 
 export const stateSchema = z.enum(["pendiente", "parcial", "despachado", "cambio"]);
+export const businessLineSchema = z.enum(businessLines);
 
 export const dispatchInputSchema = z.object({
   id: z.string().optional(),
   legacyId: z.number().int().optional().nullable(),
+  businessLine: businessLineSchema.default("Constructora"),
   project: z.string().min(1),
   type: z.string().min(1),
   detail: z.string().optional().nullable(),

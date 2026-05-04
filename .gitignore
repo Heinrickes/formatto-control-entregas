@@ -8,6 +8,7 @@ backups
 dist
 coverage
 *.log
+~$*.xlsx
 reports
 supabase/.temp
 supabase/.branches

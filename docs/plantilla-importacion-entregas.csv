@@ -1,4 +1,5 @@
-Proyecto,Fecha Despacho,Tipo,Torre,Nucleo,Piso,Deptos/Casas,Observacion
-VIVE QUINTA,2026-05-08,COCINA,Torre A,Nucleo 1,Piso 4,10,Prioridad cliente
-VIVE QUINTA,2026-05-10,CLOSET,Torre A,,Piso 5,8,
-EDIFICIO DEMO,2026-05-12,PUERTAS ABATIR,,,Casa 12,1,No aplica torre/nucleo
+Periodo,Linea Negocio,Proyecto,Fecha Despacho,Tipo,Descripcion,Torre,Nucleo,Piso,Deptos/Casas,Observacion
+2026-05,Constructora,VIVE QUINTA,2026-05-08,COCINA,Cocinas deptos piso 4,Torre A,Nucleo 1,Piso 4,10,Prioridad cliente
+2026-05,Particulares,Cliente particular ejemplo,2026-05-10,ADICIONAL,Mueble especial segun orden,,,,1,No aplica torre/nucleo/piso
+2026-05,Retail,Retail ejemplo,2026-05-12,POST VENTA,Producto retail ejemplo,,,,5,
+2026-05,Convenio Marco,Convenio marco ejemplo,2026-05-15,QUINCALLERIA,Entrega por convenio,,,,3,

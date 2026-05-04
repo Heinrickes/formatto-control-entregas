@@ -17,6 +17,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     where: { id: params.id },
     data: {
       legacyId: payload.legacyId,
+      businessLine: payload.businessLine,
       project: payload.project,
       type: payload.type,
       detail: payload.detail,

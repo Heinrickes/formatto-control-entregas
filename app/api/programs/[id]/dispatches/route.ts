@@ -29,6 +29,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     data: {
       programId: params.id,
       legacyId: payload.legacyId ?? null,
+      businessLine: payload.businessLine,
       project: payload.project,
       type: payload.type,
       detail: payload.detail ?? null,
