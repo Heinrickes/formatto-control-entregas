@@ -3,7 +3,7 @@ export type DispatchState = "pendiente" | "parcial" | "despachado" | "cambio";
 export type BusinessLine = "Constructora" | "Particulares" | "Retail" | "Convenio Marco";
 export type ProjectType = "Edificio" | "Casas" | "Mixto" | "No aplica";
 export type FabricationType = "RTA" | "ARMADO";
-export type ProductionStage = "Corte" | "Enchape" | "Perforado" | "Consolidado" | "Embalaje" | "Armado" | "CD";
+export type ProductionStage = "Plan" | "Corte" | "Enchape" | "Perforado" | "Consolidado" | "Embalaje" | "Armado" | "CD";
 
 export type DispatchRow = {
   id: string;

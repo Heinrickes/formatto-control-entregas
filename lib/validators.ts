@@ -3,7 +3,7 @@ import { z } from "zod";
 export const businessLines = ["Constructora", "Particulares", "Retail", "Convenio Marco"] as const;
 export const projectTypes = ["Edificio", "Casas", "Mixto", "No aplica"] as const;
 export const fabricationTypes = ["RTA", "ARMADO"] as const;
-export const productionStages = ["Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"] as const;
+export const productionStages = ["Plan", "Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"] as const;
 
 export const dispatchTypes = [
   "COCINA",
@@ -39,7 +39,7 @@ export const dispatchInputSchema = z.object({
   core: z.string().optional().nullable(),
   floor: z.string().optional().nullable(),
   fabricationType: fabricationTypeSchema.default("RTA"),
-  productionStage: productionStageSchema.default("Corte"),
+  productionStage: productionStageSchema.default("Plan"),
   productionStartAt: z.string().optional().nullable(),
   units: z.coerce.number().int().min(0).default(0),
   scheduledAt: z.string().min(10),

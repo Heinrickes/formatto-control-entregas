@@ -117,7 +117,7 @@ model Dispatch {
   core        String?
   floor       String?
   fabricationType String       @default("RTA")
-  productionStage String       @default("Corte")
+  productionStage String       @default("Plan")
   productionStartAt DateTime?
   units       Int            @default(0)
   scheduledAt DateTime

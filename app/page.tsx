@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { Activity, BarChart3, Briefcase, Building2, CalendarClock, ClipboardList, Download, Edit3, Eye, EyeOff, FilterX, FolderKanban, History, Layers, ListFilter, LogOut, Plus, RefreshCw, Save, Search, Shield, SlidersHorizontal, Trash2, Upload, Users } from "lucide-react";
 import { SideNav } from "@/components/side-nav";
 import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
@@ -13,10 +14,10 @@ const projectTypes = ["Edificio", "Casas", "Mixto", "No aplica"] as const;
 const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "PUERTAS CLOSET", "MARCOS CLOSET", "PIERNAS", "VANITORIO", "QUINCALLERIA", "ADICIONAL", "MUEBLE", "POST VENTA"];
 const dispatchStateOptions: DispatchState[] = ["pendiente", "parcial", "despachado", "cambio"];
 const fabricationTypes = ["RTA", "ARMADO"] as const;
-const productionStages = ["Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"] as const;
+const productionStages = ["Plan", "Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"] as const;
 const productionRoutes = {
-  RTA: ["Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "CD"],
-  ARMADO: ["Corte", "Enchape", "Perforado", "Consolidado", "Armado", "CD"]
+  RTA: ["Plan", "Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "CD"],
+  ARMADO: ["Plan", "Corte", "Enchape", "Perforado", "Consolidado", "Armado", "CD"]
 } as const;
 const APP_TIME_ZONE = "America/Santiago";
 const APP_TODAY = "";
@@ -96,7 +97,7 @@ const emptyTask = (): TaskDraft => ({
   core: "",
   floor: "",
   fabricationType: "RTA",
-  productionStage: "Corte",
+  productionStage: "Plan",
   productionStartAt: "",
   units: "0",
   scheduledAt: todayOnly()
@@ -234,7 +235,7 @@ function toTaskDraft(row: DispatchRow): TaskDraft {
     core: row.core ?? "",
     floor: row.floor ?? "",
     fabricationType: row.fabricationType ?? "RTA",
-    productionStage: row.productionStage ?? "Corte",
+    productionStage: row.productionStage ?? "Plan",
     productionStartAt: dateOnly(row.productionStartAt),
     units: String(row.units ?? 0),
     scheduledAt: dateOnly(row.scheduledAt)
@@ -281,9 +282,15 @@ function productionRouteFor(type?: string | null) {
   return type === "ARMADO" ? productionRoutes.ARMADO : productionRoutes.RTA;
 }
 
+function normalizeProductionStage(value?: string | null) {
+  const clean = (value ?? "").trim().toLowerCase();
+  if (clean === "plan" || clean === "planificado") return "Plan";
+  return productionStages.find((stage) => stage.toLowerCase() === clean) ?? "Plan";
+}
+
 function productionProgress(row: Pick<DispatchRow, "fabricationType" | "productionStage">) {
   const route = productionRouteFor(row.fabricationType);
-  const currentIndex = Math.max(0, route.findIndex((stage) => stage === row.productionStage));
+  const currentIndex = Math.max(0, route.findIndex((stage) => stage === normalizeProductionStage(row.productionStage)));
   return { route, currentIndex, percent: route.length > 1 ? Math.round((currentIndex / (route.length - 1)) * 100) : 0 };
 }
 
@@ -302,6 +309,18 @@ function unitLabel(row: Pick<DispatchRow, "businessLine" | "projectType" | "unit
   if (row.projectType === "Edificio") return `${count || "-"} deptos`;
   if (row.projectType === "Mixto") return `${count || "-"} uds mixtas`;
   return `${count || "-"} uds`;
+}
+
+function spreadsheetDateOnly(value: string) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const serial = Number(value);
+  if (Number.isFinite(serial) && serial > 20000) {
+    const epoch = Date.UTC(1899, 11, 30);
+    return new Date(epoch + serial * 86400000).toISOString().slice(0, 10);
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : dateOnly(parsed.toISOString());
 }
 
 function primaryLocationLabel(row: DispatchRow) {
@@ -343,6 +362,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   const [projectSort, setProjectSort] = useState<"prioridad" | "atraso" | "cumplimiento" | "nombre">("prioridad");
   const [timelineOffset, setTimelineOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [importStatus, setImportStatus] = useState<{ active: boolean; total: number; processed: number; created: number; updated: number; skipped: number; error?: string }>({ active: false, total: 0, processed: 0, created: 0, updated: 0, skipped: 0 });
   const [productionPendingIds, setProductionPendingIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const productionRequestSeq = useRef(0);
@@ -549,7 +569,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   }, [payload]);
   const productionMetrics = useMemo(() => {
     const rows = payload?.dispatches ?? [];
-    const inProduction = rows.filter((row) => (row.productionStage ?? "Corte") !== "CD").length;
+    const inProduction = rows.filter((row) => (row.productionStage ?? "Plan") !== "CD").length;
     const cd = rows.filter((row) => row.productionStage === "CD").length;
     const withoutStart = rows.filter((row) => !row.productionStartAt).length;
     const leadTimes = rows
@@ -862,20 +882,26 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
 
   async function importExcel(file: File) {
     setBusy(true);
-    const XLSX = await import("xlsx");
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    let targetProgramId = activeProgram?.id ?? "";
+
+    try {
     const buffer = await file.arrayBuffer();
     const wb = XLSX.read(buffer, { type: "array", cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-    const targetProgramId = await ensureProgram();
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
+    targetProgramId = await ensureProgram();
+    setImportStatus({ active: true, total: rows.length, processed: 0, created: 0, updated: 0, skipped: 0 });
 
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       const get = (...keys: string[]) => {
         const normalize = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const found = Object.keys(row).find((key) => keys.some((candidate) => normalize(key).includes(normalize(candidate))));
+        const rowKeys = Object.keys(row);
+        const found =
+          rowKeys.find((key) => keys.some((candidate) => normalize(key) === normalize(candidate))) ??
+          rowKeys.find((key) => keys.some((candidate) => normalize(key).includes(normalize(candidate))));
         return found ? String(row[found] ?? "").trim() : "";
       };
       const project = get("proyecto");
@@ -883,22 +909,33 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       const dispatchId = get("id", "dispatch id", "tarea id");
       if (!project || !scheduledAt) {
         skipped++;
+        setImportStatus({ active: true, total: rows.length, processed: index + 1, created, updated, skipped });
         continue;
       }
-      const date = scheduledAt.length >= 10 ? scheduledAt.slice(0, 10) : dateOnly(new Date(scheduledAt).toISOString());
+      const date = spreadsheetDateOnly(scheduledAt);
+      if (!date) {
+        skipped++;
+        setImportStatus({ active: true, total: rows.length, processed: index + 1, created, updated, skipped });
+        continue;
+      }
       const rawBusinessLine = get("linea negocio", "linea de negocio", "línea negocio", "línea de negocio");
       const businessLine = businessLines.find((line) => line.toLowerCase() === rawBusinessLine.toLowerCase()) ?? "Constructora";
       const rawProjectType = get("tipo proyecto", "tipo de proyecto", "clasificacion proyecto", "clasificación proyecto");
-      const projectType = projectTypes.find((type) => type.toLowerCase() === rawProjectType.toLowerCase())
-        ?? (businessLine === "Constructora" ? "Edificio" : "No aplica");
+      const projectType = businessLine === "Constructora"
+        ? projectTypes.find((type) => type.toLowerCase() === rawProjectType.toLowerCase()) ?? "Edificio"
+        : "No aplica";
       const tower = get("torre");
       const core = get("nucleo", "nucleos", "núcleo", "núcleos");
       const floor = get("piso");
       const rawFabricationType = get("fabricacion", "fabricación", "tipo fabricacion", "tipo fabricación", "va armado", "rta");
       const fabricationType = rawFabricationType.toLowerCase().includes("armado") ? "ARMADO" : "RTA";
       const rawProductionStage = get("estado produccion", "estado producción", "etapa produccion", "etapa producción", "produccion", "producción");
-      const productionStage = productionStages.find((stage) => stage.toLowerCase() === rawProductionStage.toLowerCase()) ?? "Corte";
+      const productionStage = normalizeProductionStage(rawProductionStage);
       const productionStartAt = get("fecha ingreso produccion", "fecha ingreso producción", "ingreso produccion", "ingreso producción");
+      const rawDispatchState = get("estado despacho", "estado entrega", "estado");
+      const dispatchState = dispatchStateOptions.find((state) => state.toLowerCase() === rawDispatchState.toLowerCase()) ?? "";
+      const actualDispatchAt = get("fecha real despacho", "fecha real entrega", "fecha real", "fecha despacho real");
+      const dispatchNotes = get("notas despacho", "nota despacho", "notas estado", "nota estado");
       const description = businessLine === "Constructora" ? "" : get("descripcion", "descripción");
       const observation = get("observacion", "observación", "obs");
       const houseFromObservation = projectType === "Casas" ? observation.match(/^casas?\s+(.+)/i)?.[1]?.trim() ?? "" : "";
@@ -915,7 +952,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
         floor: cleanLocationValue(floor || houseFromObservation, "piso") || null,
         fabricationType,
         productionStage,
-        productionStartAt: productionStartAt ? (productionStartAt.length >= 10 ? productionStartAt.slice(0, 10) : dateOnly(new Date(productionStartAt).toISOString())) : null,
+        productionStartAt: productionStartAt ? spreadsheetDateOnly(productionStartAt) || null : null,
         units,
         scheduledAt: date,
         source: "excel"
@@ -925,13 +962,38 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
         headers,
         body
       });
-      if (res.ok) dispatchId ? updated++ : created++;
-      else skipped++;
+      if (!res.ok) {
+        skipped++;
+        setImportStatus({ active: true, total: rows.length, processed: index + 1, created, updated, skipped });
+        continue;
+      }
+      const data = await res.json().catch(() => ({}));
+      const savedDispatchId = dispatchId || data.dispatch?.id;
+      if (dispatchState && savedDispatchId) {
+        await fetch(`/api/dispatches/${savedDispatchId}/status`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            state: dispatchState,
+            actualAt: actualDispatchAt ? spreadsheetDateOnly(actualDispatchAt) || null : null,
+            notes: dispatchNotes
+          })
+        }).catch(() => undefined);
+      }
+      dispatchId ? updated++ : created++;
+      setImportStatus({ active: true, total: rows.length, processed: index + 1, created, updated, skipped });
     }
 
     setBusy(false);
     setMessage(`Carga lista: ${created} nuevas, ${updated} actualizadas.${skipped ? ` ${skipped} filas omitidas o con error.` : ""}`);
     await loadDashboard(targetProgramId);
+    setImportStatus({ active: false, total: rows.length, processed: rows.length, created, updated, skipped });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Error desconocido";
+      setBusy(false);
+      setImportStatus((current) => ({ ...current, active: true, error: detail }));
+      setMessage(`No se pudo importar el Excel: ${detail}`);
+    }
   }
 
   async function logout() {
@@ -970,6 +1032,30 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       </header>
 
       {message && <div className="mx-6 mt-4 border-l-4 border-[var(--org)] bg-[#faece7] px-4 py-2 text-xs text-[#8b2500]">{message}</div>}
+      {importStatus.active && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4">
+          <div className="w-[420px] max-w-full border border-[var(--g2)] bg-white p-5 shadow-xl">
+            <div className="mb-1 text-sm font-bold uppercase tracking-[0.06em]">Cargando datos</div>
+            <div className="mb-4 text-xs text-[var(--mut)]">
+              {importStatus.error ? "La carga se detuvo con error." : `Procesando ${importStatus.processed} de ${importStatus.total} filas.`}
+            </div>
+            <div className="mb-3 h-2 overflow-hidden bg-[var(--g2)]">
+              <div className="h-full bg-[var(--org)]" style={{ width: `${importStatus.total ? Math.round((importStatus.processed / importStatus.total) * 100) : 8}%` }} />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="bg-[var(--g1)] p-2"><b>{importStatus.created}</b><br />Nuevas</div>
+              <div className="bg-[var(--g1)] p-2"><b>{importStatus.updated}</b><br />Actualizadas</div>
+              <div className="bg-[var(--g1)] p-2"><b>{importStatus.skipped}</b><br />Omitidas</div>
+            </div>
+            {importStatus.error && (
+              <>
+                <div className="mt-3 border-l-4 border-[var(--bad)] bg-[#fff7f5] p-2 text-xs text-[var(--bad)]">{importStatus.error}</div>
+                <button className="thin-button mt-3 w-full" onClick={() => setImportStatus({ active: false, total: 0, processed: 0, created: 0, updated: 0, skipped: 0 })}>Cerrar</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <section className="px-6 py-4">
           <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-12">
@@ -2074,7 +2160,7 @@ function ProductionProgress({
     <div className="min-w-0">
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--blk)]">{row.fabricationType ?? "RTA"}</span>
-        <span className="text-[10px] text-[var(--mut)]">{row.productionStage ?? "Corte"} · {progress.percent}%{saving ? " · guardando" : ""}</span>
+        <span className="text-[10px] text-[var(--mut)]">{row.productionStage ?? "Plan"} · {progress.percent}%{saving ? " · guardando" : ""}</span>
       </div>
       <div className="relative h-1.5 overflow-hidden bg-[var(--g2)]">
         <div className="h-full bg-[var(--org)]" style={{ width: `${progress.percent}%` }} />
@@ -2082,7 +2168,7 @@ function ProductionProgress({
       <div className={`mt-2 grid gap-1 ${compact ? "" : ""}`} style={{ gridTemplateColumns: `repeat(${progress.route.length}, minmax(0, 1fr))` }}>
         {progress.route.map((stage, index) => {
           const active = index <= progress.currentIndex;
-          const current = stage === (row.productionStage ?? "Corte");
+          const current = stage === (row.productionStage ?? "Plan");
           const content = compact ? stage : stage;
           return (
             <button

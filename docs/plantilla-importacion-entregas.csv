@@ -1,5 +1,0 @@
-Periodo,Linea Negocio,Proyecto,Tipo Proyecto,Fecha Despacho,Tipo,Descripcion,Torre,Nucleo,Piso,Fabricacion,Estado Produccion,Fecha Ingreso Produccion,Deptos/Casas,Observacion
-2026-05,Constructora,VIVE QUINTA,Edificio,2026-05-08,COCINA,Cocinas deptos piso 4,Torre A,Nucleo 1,Piso 4,RTA,Corte,2026-05-02,10,Prioridad cliente
-2026-05,Constructora,CHICAUMA,Casas,2026-05-08,COCINA,Cocinas casas,,,,RTA,Corte,2026-05-02,5,Casas 56 - 60
-2026-05,Particulares,Cliente particular ejemplo,No aplica,2026-05-10,MUEBLE,Mueble especial segun orden,,,,ARMADO,Armado,2026-05-03,1,No aplica torre/nucleo/piso
-2026-05,Retail,Retail ejemplo,No aplica,2026-05-12,MUEBLE,Producto retail ejemplo,,,,RTA,Embalaje,2026-05-04,5,

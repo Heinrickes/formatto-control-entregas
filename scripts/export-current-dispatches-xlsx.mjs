@@ -15,7 +15,7 @@ async function main() {
   try {
     const program = await prisma.program.findFirst({
       where: { active: true },
-      include: { dispatches: { orderBy: [{ businessLine: "asc" }, { project: "asc" }, { scheduledAt: "asc" }, { type: "asc" }] } }
+      include: { dispatches: { orderBy: [{ businessLine: "asc" }, { project: "asc" }, { scheduledAt: "asc" }, { type: "asc" }], include: { status: true } } }
     });
     if (program) dispatches = program.dispatches;
   } catch {
@@ -44,8 +44,11 @@ async function main() {
     Fabricacion: dispatch.fabricationType,
     "Estado Produccion": dispatch.productionStage,
     "Fecha Ingreso Produccion": dateOnly(dispatch.productionStartAt),
+    "Estado Despacho": dispatch.status?.state ?? "pendiente",
+    "Fecha Real Despacho": dateOnly(dispatch.status?.actualAt),
     "Deptos/Casas": dispatch.units,
-    Observacion: dispatch.detail ?? ""
+    Observacion: dispatch.detail ?? "",
+    "Notas Despacho": dispatch.status?.notes ?? ""
   }));
 
   const workbook = XLSX.utils.book_new();
@@ -65,7 +68,10 @@ async function main() {
     { wch: 12 },
     { wch: 18 },
     { wch: 22 },
+    { wch: 18 },
+    { wch: 18 },
     { wch: 12 },
+    { wch: 42 },
     { wch: 42 }
   ];
   XLSX.utils.book_append_sheet(workbook, worksheet, "Carga Ajuste");
@@ -76,7 +82,8 @@ async function main() {
     ["No modifiques ID si quieres actualizar una tarea existente. Si dejas ID vacio, la app creara una tarea nueva."],
     [""],
     ["Valores Fabricacion", "RTA", "ARMADO"],
-    ["Valores Estado Produccion", "Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"],
+    ["Valores Estado Produccion", "Plan", "Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"],
+    ["Valores Estado Despacho", "pendiente", "parcial", "despachado", "cambio"],
     ["Formato fechas", "AAAA-MM-DD"]
   ]);
   guide["!cols"] = [{ wch: 28 }, { wch: 24 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
