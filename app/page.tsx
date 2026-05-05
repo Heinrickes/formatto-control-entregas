@@ -11,6 +11,7 @@ import { cleanLocationValue, normalizeProjectName } from "@/lib/formatting";
 const businessLines = ["Constructora", "Particulares", "Retail", "Convenio Marco"] as const;
 const projectTypes = ["Edificio", "Casas", "Mixto", "No aplica"] as const;
 const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "PUERTAS CLOSET", "MARCOS CLOSET", "PIERNAS", "VANITORIO", "QUINCALLERIA", "ADICIONAL", "MUEBLE", "POST VENTA"];
+const dispatchStateOptions: DispatchState[] = ["pendiente", "parcial", "despachado", "cambio"];
 const fabricationTypes = ["RTA", "ARMADO"] as const;
 const productionStages = ["Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"] as const;
 const productionRoutes = {
@@ -468,8 +469,39 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
     });
   }, [payload, businessLineFilter, typeFilter, stateFilter, projectFilter, timeFilter, search]);
 
-  const projects = useMemo(() => ["todos", ...Array.from(new Set((payload?.dispatches ?? []).map((row) => row.project)))], [payload]);
-  const availableBusinessLines = useMemo(() => ["todos", ...businessLines.filter((line) => (payload?.dispatches ?? []).some((row) => (row.businessLine ?? "Constructora") === line))], [payload]);
+  const rowsForFilterOptions = useCallback((skip: "businessLine" | "project" | "type" | "state" | "time") => {
+    let rows = payload?.dispatches ?? [];
+    if (skip !== "businessLine" && businessLineFilter !== "todos") rows = rows.filter((row) => (row.businessLine ?? "Constructora") === businessLineFilter);
+    if (skip !== "type" && typeFilter !== "todos") rows = rows.filter((row) => row.type === typeFilter);
+    if (skip !== "state" && stateFilter !== "todos") rows = rows.filter((row) => (row.status?.state ?? "pendiente") === stateFilter);
+    if (skip !== "project" && projectFilter !== "todos") rows = rows.filter((row) => row.project === projectFilter);
+    if (skip !== "time" && timeFilter !== "todos") {
+      rows = rows.filter((row) => {
+        const state = row.status?.state ?? "pendiente";
+        const time = timeState(row);
+        if (state === "despachado") return false;
+        if (timeFilter === "atrasadas") return time.value > 0;
+        if (timeFilter === "hoy") return time.value === 0;
+        return time.value < 0 && Math.abs(time.value) <= 7;
+      });
+    }
+    if (search.trim()) {
+      const term = search.trim().toLowerCase();
+      rows = rows.filter((row) => [row.businessLine, row.project, row.type, row.description, row.detail, row.tower, row.core, row.floor, String(row.units)].join(" ").toLowerCase().includes(term));
+    }
+    return rows;
+  }, [businessLineFilter, payload, projectFilter, search, stateFilter, timeFilter, typeFilter]);
+
+  const projects = useMemo(() => ["todos", ...Array.from(new Set(rowsForFilterOptions("project").map((row) => row.project))).sort()], [rowsForFilterOptions]);
+  const availableTypes = useMemo(() => ["todos", ...Array.from(new Set(rowsForFilterOptions("type").map((row) => row.type))).sort()], [rowsForFilterOptions]);
+  const availableStates = useMemo<Array<DispatchState | "todos">>(() => ["todos", ...dispatchStateOptions.filter((state) => rowsForFilterOptions("state").some((row) => (row.status?.state ?? "pendiente") === state))], [rowsForFilterOptions]);
+  const availableBusinessLines = useMemo(() => ["todos", ...businessLines.filter((line) => rowsForFilterOptions("businessLine").some((row) => (row.businessLine ?? "Constructora") === line))], [rowsForFilterOptions]);
+  useEffect(() => {
+    if (projectFilter !== "todos" && !projects.includes(projectFilter)) setProjectFilter("todos");
+    if (typeFilter !== "todos" && !availableTypes.includes(typeFilter)) setTypeFilter("todos");
+    if (stateFilter !== "todos" && !availableStates.includes(stateFilter)) setStateFilter("todos");
+    if (businessLineFilter !== "todos" && !availableBusinessLines.includes(businessLineFilter)) setBusinessLineFilter("todos");
+  }, [availableBusinessLines, availableStates, availableTypes, businessLineFilter, projectFilter, projects, stateFilter, typeFilter]);
   const activeProgram = payload?.program ?? programs.find((program) => program.id === programId) ?? programs.find((program) => program.active);
 
   const start = useMemo(() => {
@@ -574,19 +606,19 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       .filter((section) => section.groups.length > 0);
   }, [groupedDispatches]);
   const urgentRows = useMemo(() => {
-    return (payload?.dispatches ?? [])
+    return dispatches
       .filter((row) => (row.status?.state ?? "pendiente") !== "despachado")
       .map((row) => ({ row, time: timeState(row) }))
       .filter((item) => item.time.value >= 0 || Math.abs(item.time.value) <= 3 || item.row.status?.state === "cambio")
       .sort((a, b) => b.time.value - a.time.value)
       .slice(0, 8);
-  }, [payload]);
+  }, [dispatches]);
   const timelineRows = useMemo(() => {
-    return (payload?.dispatches ?? [])
+    return dispatches
       .slice()
       .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
       .filter((row) => (row.status?.state ?? "pendiente") !== "despachado");
-  }, [payload]);
+  }, [dispatches]);
 
   function toggleChecked(id: string) {
     setChecked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -1014,6 +1046,8 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
 
           <FilterToolbar
             projects={projects}
+            types={availableTypes}
+            states={availableStates}
             businessLines={availableBusinessLines}
             businessLineFilter={businessLineFilter}
             typeFilter={typeFilter}
@@ -1558,6 +1592,8 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 
 function FilterToolbar({
   projects,
+  types,
+  states,
   businessLines,
   businessLineFilter,
   typeFilter,
@@ -1576,6 +1612,8 @@ function FilterToolbar({
   onClearFilters
 }: {
   projects: string[];
+  types: string[];
+  states: Array<DispatchState | "todos">;
   businessLines: string[];
   businessLineFilter: string;
   typeFilter: string;
@@ -1621,17 +1659,14 @@ function FilterToolbar({
           <Layers size={15} className={iconClass} />
           <select className={selectClass} value={typeFilter} onChange={(event) => onTypeFilter(event.target.value)}>
             <option value="todos">Todos los conjuntos</option>
-            {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+            {types.filter((type) => type !== "todos").map((type) => <option key={type} value={type}>{type}</option>)}
           </select>
         </label>
         <label className={fieldWrap} title="Estado despacho">
           <ListFilter size={15} className={iconClass} />
           <select className={selectClass} value={stateFilter} onChange={(event) => onStateFilter(event.target.value as DispatchState | "todos")}>
             <option value="todos">Todos los estados</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="parcial">Parcial</option>
-            <option value="despachado">Despachado</option>
-            <option value="cambio">Cambio</option>
+            {states.filter((state) => state !== "todos").map((state) => <option key={state} value={state}>{state === "pendiente" ? "Pendiente" : state === "parcial" ? "Parcial" : state === "despachado" ? "Despachado" : "Cambio"}</option>)}
           </select>
         </label>
         <label className={fieldWrap} title="Tiempo">
@@ -1727,6 +1762,13 @@ function OperationsSummaryPanel({
   const criticalAll = pending.filter((row) => timeState(row).value >= 0);
   const critical = criticalAll.slice(0, 6);
   const focusProjects = groups;
+  const focusByBusinessLine = businessLines
+    .filter((line) => line !== "todos")
+    .map((line) => ({
+      line,
+      groups: focusProjects.filter((group) => (group.rows[0]?.businessLine ?? "Constructora") === line)
+    }))
+    .filter((section) => section.groups.length > 0);
   const toggleState = (state: DispatchState) => onStateFilter(stateFilter === state ? "todos" : state);
   const toggleLate = () => {
     onTimeFilter(timeFilter === "atrasadas" ? "todos" : "atrasadas");
@@ -1758,19 +1800,26 @@ function OperationsSummaryPanel({
       </section>
       <section className="border border-[var(--g2)] bg-white p-3">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Foco por proyecto</div>
-        <div className="space-y-2">
-          {focusProjects.map((group) => (
-            <button key={group.project} className={`w-full border-l-4 p-2 text-left hover:bg-[#faece7] ${projectTone(group)}`} onClick={() => onProject(group.project)} title={projectFilter === group.project ? "Quitar foco del proyecto" : "Filtrar por proyecto"}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-xs font-bold">{group.project}</span>
-                <span className="text-[10px] text-[var(--mut)]">{projectFilter === group.project ? "activo" : `${group.performance?.completion ?? 0}%`}</span>
+        <div className="space-y-3">
+          {focusByBusinessLine.map((section) => (
+            <div key={section.line}>
+              <div className="mb-1 border-l-2 border-[var(--org)] pl-2 text-[9px] font-bold uppercase tracking-[0.08em] text-[var(--mut)]">{section.line}</div>
+              <div className="space-y-2">
+                {section.groups.map((group) => (
+                  <button key={group.project} className={`w-full border-l-4 p-2 text-left hover:bg-[#faece7] ${projectTone(group)}`} onClick={() => onProject(group.project)} title={projectFilter === group.project ? "Quitar foco del proyecto" : "Filtrar por proyecto"}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-xs font-bold">{group.project}</span>
+                      <span className="text-[10px] text-[var(--mut)]">{projectFilter === group.project ? "activo" : `${group.performance?.completion ?? 0}%`}</span>
+                    </div>
+                    <div className="mt-1 text-[10px] text-[var(--mut)]">
+                      {group.performance ? `${group.performance.dispatched}/${group.performance.total} desp.` : `${group.rows.length} tareas`}
+                      {group.delayedTasks ? ` · ${group.delayedTasks} atraso` : ""}
+                      {group.pendingCritical ? ` · ${group.pendingCritical} críticas` : ""}
+                    </div>
+                  </button>
+                ))}
               </div>
-              <div className="mt-1 text-[10px] text-[var(--mut)]">
-                {group.performance ? `${group.performance.dispatched}/${group.performance.total} desp.` : `${group.rows.length} tareas`}
-                {group.delayedTasks ? ` · ${group.delayedTasks} atraso` : ""}
-                {group.pendingCritical ? ` · ${group.pendingCritical} críticas` : ""}
-              </div>
-            </button>
+            </div>
           ))}
         </div>
       </section>
@@ -1891,8 +1940,9 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
   onSelect: (row: DispatchRow) => void;
 }) {
   const today = todayOnly();
+  const sectionRef = useRef<HTMLElement | null>(null);
   const days = useMemo(() => {
-    const center = addBusinessDays(today, offset * 9);
+    const center = addBusinessDays(today, offset);
     return Array.from({ length: 9 }, (_, index) => addBusinessDays(center, index - 4));
   }, [offset, today]);
   const rowsByDay = useMemo(() => {
@@ -1903,18 +1953,21 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
     });
     return map;
   }, [rows]);
+  const settleTimeline = () => {
+    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   return (
-    <section className="border border-[var(--g2)] bg-white p-5 shadow-sm">
+    <section ref={sectionRef} className="border border-[var(--g2)] bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="mb-1 text-base font-semibold">Panel de Control de Despacho</div>
           <div className="text-xs text-[var(--mut)]">4 días atrás · hoy · 4 días adelante</div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="thin-button" onClick={() => onMove(offset - 1)}>Anterior</button>
+          <button className="thin-button" onClick={() => onMove(offset - 9)}>Anterior</button>
           <button className="thin-button active" onClick={() => onMove(0)}>Hoy</button>
-          <button className="thin-button" onClick={() => onMove(offset + 1)}>Siguiente</button>
+          <button className="thin-button" onClick={() => onMove(offset + 9)}>Siguiente</button>
         </div>
       </div>
       <div className="overflow-x-auto pb-2">
@@ -1950,6 +2003,26 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
             );
           })}
         </div>
+      </div>
+      <div className="mt-2 grid gap-2 border-t border-[var(--g2)] pt-3">
+        <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--mut)]">
+          <span>-36 dias</span>
+          <span>{offset === 0 ? "Hoy" : offset < 0 ? `${Math.abs(offset)} dias atras` : `${offset} dias adelante`}</span>
+          <span>+36 dias</span>
+        </div>
+        <input
+          className="w-full accent-[var(--org)]"
+          type="range"
+          min="-36"
+          max="36"
+          step="1"
+          value={offset}
+          onChange={(event) => onMove(Number(event.target.value))}
+          onMouseUp={settleTimeline}
+          onTouchEnd={settleTimeline}
+          onKeyUp={settleTimeline}
+          aria-label="Mover rango de dias del panel de despacho"
+        />
       </div>
       <div className="mt-1 border-t border-[var(--g2)] pt-3 text-[10px] text-[var(--mut)]">Hoy fijado: {shortDate(today)}. Si hay mas de una entrega por dia, se apilan hacia abajo.</div>
     </section>
