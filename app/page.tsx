@@ -315,8 +315,12 @@ function secondaryLocationLabel(row: DispatchRow) {
 
 function quantityClass(row: DispatchRow) {
   return (row.businessLine ?? "Constructora") !== "Constructora"
-    ? "inline-flex min-h-8 min-w-10 items-center justify-center border border-[var(--org)] bg-[#faece7] px-2 text-base font-bold leading-none text-[var(--org)]"
-    : "break-words font-semibold";
+    ? "text-sm font-bold leading-tight text-[var(--blk)]"
+    : "break-words font-semibold leading-tight";
+}
+
+function locationCellClass(row: DispatchRow) {
+  return "min-w-0 border-l-2 border-[var(--org)] pl-2 text-left";
 }
 
 export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: DashboardView }) {
@@ -1067,7 +1071,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
           <div className="min-w-[1240px] bg-white">
             <div className="grid grid-cols-[30px_minmax(92px,0.44fr)_190px_82px_82px_74px_minmax(390px,1fr)_34px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
               <button className="text-left" onClick={toggleAllVisible}>Sel</button>
-              <div>Entrega</div><div>Ubicación</div><div>Programación</div><div>Resultado</div><div>Estado</div><div className="border-l border-white/25 pl-3">Producción</div><div></div>
+              <div>Entrega</div><div>Ubicación</div><div>Programación</div><div>Resultado</div><div>Estado</div><div className="border-l-2 border-white/60 pl-3">Producción</div><div></div>
             </div>
             {groupedByBusinessLine.map((section) => (
               <div key={section.line}>
@@ -1098,7 +1102,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                             <div className="font-semibold">{row.type}</div>
                             <div className="whitespace-normal break-words text-[10px] leading-snug text-[var(--mut)]">{dispatchObservation(row)}</div>
                           </button>
-                        <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
+                        <button className={locationCellClass(row)} onClick={() => setSelected(row)}>
                           <div className={quantityClass(row)}>{primaryLocationLabel(row)}</div>
                           {secondaryLocationLabel(row) && <div className="whitespace-normal break-words text-[10px] leading-snug text-[var(--mut)]">{secondaryLocationLabel(row)}</div>}
                         </button>
@@ -1113,7 +1117,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                             </div>
                           </button>
                           <div><span className={`status-badge ${statusClass(state)}`}>{state}</span></div>
-                          <div className="min-w-0 border-l border-[var(--g2)] bg-white/70 py-1 pl-3 pr-2 text-left">
+                          <div className="min-w-0 border-l-2 border-[#9a9a9a] bg-white/70 py-1 pl-3 pr-2 text-left">
                             <ProductionProgress row={row} compact saving={productionPendingIds.includes(row.id)} disabled={role === "lector"} onStageChange={(stage) => saveProduction(row, stage)} />
                             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--mut)]">
                               <span>Ingreso {shortDate(row.productionStartAt)}</span>
