@@ -37,12 +37,6 @@ type TaskDraft = {
   scheduledAt: string;
 };
 
-type BulkDraft = {
-  state: DispatchState;
-  actualAt: string;
-  notes: string;
-};
-
 type Session = {
   email: string;
   role: Role;
@@ -309,6 +303,22 @@ function unitLabel(row: Pick<DispatchRow, "businessLine" | "projectType" | "unit
   return `${count || "-"} uds`;
 }
 
+function primaryLocationLabel(row: DispatchRow) {
+  if ((row.businessLine ?? "Constructora") !== "Constructora") return String(row.units || "-");
+  return locationDetail(row) || "-";
+}
+
+function secondaryLocationLabel(row: DispatchRow) {
+  if ((row.businessLine ?? "Constructora") !== "Constructora") return "";
+  return unitLabel(row);
+}
+
+function quantityClass(row: DispatchRow) {
+  return (row.businessLine ?? "Constructora") !== "Constructora"
+    ? "inline-flex min-h-8 min-w-10 items-center justify-center border border-[var(--org)] bg-[#faece7] px-2 text-base font-bold leading-none text-[var(--org)]"
+    : "break-words font-semibold";
+}
+
 export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: DashboardView }) {
   const [session, setSession] = useState<Session | null>(null);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
@@ -336,6 +346,10 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   const showUrgent = defaultView === "dashboard" || defaultView === "urgent";
   const showTasks = defaultView === "dashboard" || defaultView === "tasks";
 
+  const clearConnectionMessage = useCallback(() => {
+    setMessage((current) => current.startsWith("No se pudo cargar el tablero") || current.startsWith("No se pudo conectar con la API") ? "" : current);
+  }, []);
+
   useEffect(() => {
     const raw = window.localStorage.getItem("formatto-session");
     if (raw) setSession(JSON.parse(raw));
@@ -346,6 +360,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
 
   const loadPrograms = useCallback(async () => {
     const res = await fetch("/api/programs", { headers });
+    if (!res.ok) throw new Error("No se pudo cargar programas.");
     const data = await res.json();
     const list = data.programs ?? [];
     setPrograms(list);
@@ -353,7 +368,8 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       list.find((p: ProgramSummary) => p.active && (p._count?.dispatches ?? 0) > 0) ??
       [...list].sort((a: ProgramSummary, b: ProgramSummary) => (b._count?.dispatches ?? 0) - (a._count?.dispatches ?? 0))[0];
     if (active && !programId) setProgramId(active.id);
-  }, [headers, programId]);
+    clearConnectionMessage();
+  }, [clearConnectionMessage, headers, programId]);
 
   const keepPendingProduction = useCallback((nextPayload: DashboardPayload) => {
     const pending = productionPendingRef.current;
@@ -370,9 +386,11 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   const loadDashboard = useCallback(async (id = programId) => {
     const suffix = id ? `?programId=${id}` : "";
     const res = await fetch(`/api/dashboard${suffix}`, { headers });
+    if (!res.ok) throw new Error("No se pudo cargar dashboard.");
     const data = await res.json();
     setPayload(keepPendingProduction(data));
-  }, [headers, keepPendingProduction, programId]);
+    clearConnectionMessage();
+  }, [clearConnectionMessage, headers, keepPendingProduction, programId]);
 
   useEffect(() => {
     loadPrograms().catch(() => setMessage("No se pudo cargar el tablero. Revisa Supabase y DATABASE_URL."));
@@ -508,7 +526,6 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       averageLead: leadTimes.length ? Math.round(leadTimes.reduce((sum, value) => sum + value, 0) / leadTimes.length) : null
     };
   }, [payload]);
-  const checkedRows = useMemo(() => dispatches.filter((row) => checked.includes(row.id)), [checked, dispatches]);
   const selectedProjectPerformance = useMemo(() => {
     if (projectFilter === "todos") return null;
     return payload?.projectPerformance?.find((item) => item.project === projectFilter) ?? null;
@@ -610,6 +627,12 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
     setSelected((current) => current?.id === nextDispatch.id ? { ...current, ...nextDispatch } : current);
   }
 
+  function selectedRowsForAction(row: DispatchRow) {
+    if (!checked.includes(row.id)) return [row];
+    const rows = (payload?.dispatches ?? []).filter((item) => checked.includes(item.id));
+    return rows.length ? rows : [row];
+  }
+
   async function ensureProgram() {
     if (activeProgram?.id) return activeProgram.id;
 
@@ -688,119 +711,117 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   }
 
   async function saveStatus(row: DispatchRow, state: DispatchState, actualAt: string, notes: string, completionDueAt?: string) {
-    const completeProduction = state === "despachado" && row.productionStage !== "CD"
-      ? window.confirm("Esta entrega quedara como despachada. Deseas marcar tambien la produccion completa en CD?")
+    const targetRows = selectedRowsForAction(row);
+    const bulkLabel = targetRows.length > 1 ? ` las ${targetRows.length} tareas seleccionadas` : " esta entrega";
+    const completeProduction = state === "despachado" && targetRows.some((item) => item.productionStage !== "CD")
+      ? window.confirm(`Se marcara${targetRows.length > 1 ? "n" : ""}${bulkLabel} como despachada${targetRows.length > 1 ? "s" : ""}. Deseas marcar tambien la produccion completa en CD?`)
       : false;
     setBusy(true);
-    const res = await fetch(`/api/dispatches/${row.id}/status`, {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify({ state, actualAt: actualAt || null, completionDueAt: completionDueAt || null, notes })
-    });
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      setBusy(false);
-      setMessage(error.error ?? "No se pudo guardar el estado.");
-      return;
-    }
-    const data = await res.json();
-    let nextRow = { ...row, status: data.status } as DispatchRow;
-    patchDispatchLocally(nextRow);
-
+    let saved = 0;
+    let failed = 0;
     let productionWarning = "";
-    if (completeProduction) {
-      const productionRow = { ...nextRow, productionStage: "CD" } as DispatchRow;
-      patchDispatchLocally(productionRow);
-      const productionRes = await fetch(`/api/dispatches/${row.id}/production`, {
+
+    for (const target of targetRows) {
+      const res = await fetch(`/api/dispatches/${target.id}/status`, {
         method: "PATCH",
         headers,
-        body: JSON.stringify({
-          fabricationType: row.fabricationType ?? "RTA",
-          productionStage: "CD",
-          productionStartAt: row.productionStartAt ? dateOnly(row.productionStartAt) : null
-        })
+        body: JSON.stringify({ state, actualAt: actualAt || null, completionDueAt: completionDueAt || null, notes })
       });
-      if (productionRes.ok) {
+      if (!res.ok) {
+        failed++;
+        continue;
+      }
+      const data = await res.json();
+      let nextRow = { ...target, status: data.status } as DispatchRow;
+      patchDispatchLocally(nextRow);
+      saved++;
+
+      if (completeProduction && target.productionStage !== "CD") {
+        const productionRow = { ...nextRow, productionStage: "CD" } as DispatchRow;
+        patchDispatchLocally(productionRow);
+        const productionRes = await fetch(`/api/dispatches/${target.id}/production`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            fabricationType: target.fabricationType ?? "RTA",
+            productionStage: "CD",
+            productionStartAt: target.productionStartAt ? dateOnly(target.productionStartAt) : null
+          })
+        });
+        if (!productionRes.ok) {
+          productionWarning = "Algunos estados se guardaron, pero no se pudo marcar toda la produccion en CD.";
+          continue;
+        }
         const productionData = await productionRes.json();
         nextRow = productionData.dispatch;
         patchDispatchLocally(nextRow);
-      } else {
-        productionWarning = "Estado guardado. No se pudo marcar produccion en CD.";
       }
     }
 
     await loadDashboard();
     setBusy(false);
-    setMessage(productionWarning || (completeProduction ? "Guardado correctamente. Produccion marcada en CD." : "Guardado correctamente."));
+    if (failed) {
+      setMessage(`${saved} guardadas. ${failed} no se pudieron guardar.`);
+      return;
+    }
+    setMessage(productionWarning || (targetRows.length > 1 ? `${saved} tareas guardadas correctamente${completeProduction ? " con produccion en CD" : ""}.` : completeProduction ? "Guardado correctamente. Produccion marcada en CD." : "Guardado correctamente."));
   }
 
   async function saveProduction(row: DispatchRow, productionStage: string, fabricationType = row.fabricationType ?? "RTA", productionStartAt = row.productionStartAt ? dateOnly(row.productionStartAt) : "") {
-    const requestId = productionRequestSeq.current + 1;
-    productionRequestSeq.current = requestId;
-    const optimistic = {
-      ...row,
-      fabricationType,
-      productionStage,
-      productionStartAt: productionStartAt || null
-    } as DispatchRow;
+    const targetRows = selectedRowsForAction(row);
+    const compatibleRows = targetRows.filter((target) => productionRouteFor(target.id === row.id ? fabricationType : target.fabricationType).some((stage) => stage === productionStage));
+    const skipped = targetRows.length - compatibleRows.length;
 
-    productionPendingRef.current[row.id] = { requestId, snapshot: row, optimistic };
-    setProductionPendingIds((current) => Array.from(new Set([...current, row.id])));
-    patchDispatchLocally(optimistic);
+    await Promise.all(compatibleRows.map(async (target) => {
+      const nextFabricationType = target.id === row.id ? fabricationType : target.fabricationType ?? "RTA";
+      const nextProductionStartAt = target.id === row.id ? productionStartAt : target.productionStartAt ? dateOnly(target.productionStartAt) : "";
+      const requestId = productionRequestSeq.current + 1;
+      productionRequestSeq.current = requestId;
+      const optimistic = {
+        ...target,
+        fabricationType: nextFabricationType,
+        productionStage,
+        productionStartAt: nextProductionStartAt || null
+      } as DispatchRow;
 
-    try {
-      const res = await fetch(`/api/dispatches/${row.id}/production`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ fabricationType, productionStage, productionStartAt: productionStartAt || null })
-      });
-      if (!res.ok) {
-        const error = await res.json().catch(() => ({}));
-        if (productionPendingRef.current[row.id]?.requestId === requestId) {
-          patchDispatchLocally(productionPendingRef.current[row.id].snapshot);
-          delete productionPendingRef.current[row.id];
-          setProductionPendingIds((current) => current.filter((id) => id !== row.id));
-          setMessage(error.error ?? "No se pudo actualizar producción.");
+      productionPendingRef.current[target.id] = { requestId, snapshot: target, optimistic };
+      setProductionPendingIds((current) => Array.from(new Set([...current, target.id])));
+      patchDispatchLocally(optimistic);
+
+      try {
+        const res = await fetch(`/api/dispatches/${target.id}/production`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ fabricationType: nextFabricationType, productionStage, productionStartAt: nextProductionStartAt || null })
+        });
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({}));
+          if (productionPendingRef.current[target.id]?.requestId === requestId) {
+            patchDispatchLocally(productionPendingRef.current[target.id].snapshot);
+            delete productionPendingRef.current[target.id];
+            setProductionPendingIds((current) => current.filter((id) => id !== target.id));
+            setMessage(error.error ?? "No se pudo actualizar producción.");
+          }
+          return;
         }
-        return;
+        const data = await res.json();
+        if (productionPendingRef.current[target.id]?.requestId === requestId) {
+          patchDispatchLocally(data.dispatch);
+          delete productionPendingRef.current[target.id];
+          setProductionPendingIds((current) => current.filter((id) => id !== target.id));
+          setMessage(skipped ? `${skipped} seleccionadas no usan esta etapa de produccion.` : "");
+        }
+      } catch {
+        if (productionPendingRef.current[target.id]?.requestId === requestId) {
+          patchDispatchLocally(productionPendingRef.current[target.id].snapshot);
+          delete productionPendingRef.current[target.id];
+          setProductionPendingIds((current) => current.filter((id) => id !== target.id));
+          setMessage("No se pudo actualizar producción.");
+        }
       }
-      const data = await res.json();
-      if (productionPendingRef.current[row.id]?.requestId === requestId) {
-        patchDispatchLocally(data.dispatch);
-        delete productionPendingRef.current[row.id];
-        setProductionPendingIds((current) => current.filter((id) => id !== row.id));
-        setMessage("");
-      }
-    } catch {
-      if (productionPendingRef.current[row.id]?.requestId === requestId) {
-        patchDispatchLocally(productionPendingRef.current[row.id].snapshot);
-        delete productionPendingRef.current[row.id];
-        setProductionPendingIds((current) => current.filter((id) => id !== row.id));
-        setMessage("No se pudo actualizar producción.");
-      }
-    }
-  }
+    }));
 
-  async function saveBulkStatus(draft: BulkDraft) {
-    if (checked.length === 0) return;
-    setBusy(true);
-    const res = await fetch("/api/dispatches/bulk-status", {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify({
-        ids: checked,
-        status: { state: draft.state, actualAt: draft.actualAt || null, notes: draft.notes }
-      })
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      setMessage(error.error ?? "No se pudo actualizar masivamente.");
-      return;
-    }
-    setMessage(`${checked.length} tareas actualizadas.`);
-    setChecked([]);
-    await loadDashboard();
+    if (!compatibleRows.length && skipped) setMessage("Las tareas seleccionadas no usan esta etapa de produccion.");
   }
 
   async function importExcel(file: File) {
@@ -1042,11 +1063,9 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
               <Metric label="Fallos atraso" value={selectedProjectPerformance.late} />
             </div>
           )}
-        <BulkStatusBar count={checked.length} rows={checkedRows} role={role} busy={busy} onClear={() => setChecked([])} onSave={saveBulkStatus} />
-
         <div className="overflow-x-auto border border-[var(--g2)]">
           <div className="min-w-[1240px] bg-white">
-            <div className="grid grid-cols-[30px_minmax(118px,0.58fr)_145px_82px_82px_74px_minmax(390px,1fr)_34px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
+            <div className="grid grid-cols-[30px_minmax(92px,0.44fr)_190px_82px_82px_74px_minmax(390px,1fr)_34px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
               <button className="text-left" onClick={toggleAllVisible}>Sel</button>
               <div>Entrega</div><div>Ubicación</div><div>Programación</div><div>Resultado</div><div>Estado</div><div className="border-l border-white/25 pl-3">Producción</div><div></div>
             </div>
@@ -1073,15 +1092,15 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                         state === "despachado" ? "opacity-70" : "";
                       const resultDiff = row.status?.actualAt ? businessDiffDays(row.scheduledAt, row.status.actualAt) : null;
                       return (
-                        <div key={row.id} className={`grid grid-cols-[30px_minmax(118px,0.58fr)_145px_82px_82px_74px_minmax(390px,1fr)_34px] items-stretch border-t border-[var(--g2)] px-2 py-2 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
-                          <input type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
+                        <div key={row.id} className={`grid grid-cols-[30px_minmax(92px,0.44fr)_190px_82px_82px_74px_minmax(390px,1fr)_34px] items-stretch border-t border-[var(--g2)] px-2 py-2 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
+                          <input className="h-3 w-3 accent-[var(--org)]" type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
                           <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
                             <div className="font-semibold">{row.type}</div>
                             <div className="whitespace-normal break-words text-[10px] leading-snug text-[var(--mut)]">{dispatchObservation(row)}</div>
                           </button>
                         <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
-                          <div className="break-words font-semibold">{locationDetail(row) || "-"}</div>
-                          <div className="text-[10px] text-[var(--mut)]">{unitLabel(row)}</div>
+                          <div className={quantityClass(row)}>{primaryLocationLabel(row)}</div>
+                          {secondaryLocationLabel(row) && <div className="whitespace-normal break-words text-[10px] leading-snug text-[var(--mut)]">{secondaryLocationLabel(row)}</div>}
                         </button>
                           <button className="text-left" onClick={() => setSelected(row)}>
                             <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
@@ -1826,7 +1845,7 @@ function ProjectGroupHeader({ group, collapsed, allSelected, onToggle, onSelectA
       <div className="mb-1.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button className="thin-button px-2 py-1" onClick={onToggle} title={collapsed ? "Expandir proyecto" : "Colapsar proyecto"}>{collapsed ? "+" : "-"}</button>
-          <input type="checkbox" checked={allSelected} onChange={onSelectAll} aria-label={`Seleccionar tareas de ${group.project}`} />
+          <input className="h-3 w-3 accent-[var(--org)]" type="checkbox" checked={allSelected} onChange={onSelectAll} aria-label={`Seleccionar tareas de ${group.project}`} />
           <div>
           <div className="text-sm font-bold leading-tight">{group.project}</div>
           <div className="text-[10px] text-[var(--mut)]">
@@ -1956,36 +1975,6 @@ function UrgentPanel({ items, onSelect }: { items: Array<{ row: DispatchRow; tim
         ))}
       </div>
     </section>
-  );
-}
-
-function BulkStatusBar({ count, rows, role, busy, onClear, onSave }: {
-  count: number;
-  rows: DispatchRow[];
-  role: Role;
-  busy: boolean;
-  onClear: () => void;
-  onSave: (draft: BulkDraft) => void;
-}) {
-  const [state, setState] = useState<DispatchState>("despachado");
-  const [actualAt, setActualAt] = useState(todayOnly());
-  const [notes, setNotes] = useState("");
-  const disabled = count === 0 || role === "lector" || busy;
-
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-2 border border-[var(--g2)] bg-white p-3">
-      <div className="mr-2 text-xs font-semibold text-[var(--blk)]">{count} seleccionadas</div>
-      <select className="field w-auto" value={state} disabled={disabled} onChange={(event) => setState(event.target.value as DispatchState)}>
-        <option value="despachado">Despachado</option>
-        <option value="parcial">Parcial</option>
-        <option value="cambio">Cambio</option>
-        <option value="pendiente">Pendiente</option>
-      </select>
-      <input className="field w-auto" type="date" value={actualAt} disabled={disabled || state === "pendiente"} onChange={(event) => setActualAt(event.target.value)} title={state === "parcial" ? "Fecha compromiso para completar" : "Fecha"} />
-      <input className="field min-w-[260px] flex-1" value={notes} disabled={disabled} onChange={(event) => setNotes(event.target.value)} placeholder={state === "parcial" ? "Motivo parcial y saldo por completar" : rows.length ? `Nota para ${rows.length} tareas` : "Selecciona tareas para actualizacion masiva"} />
-      <button className="primary-button" disabled={disabled} onClick={() => onSave({ state, actualAt, notes })}>Actualizar masivo</button>
-      <button className="thin-button" disabled={count === 0} onClick={onClear}>Limpiar</button>
-    </div>
   );
 }
 
