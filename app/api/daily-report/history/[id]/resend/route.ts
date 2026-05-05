@@ -1,25 +1,10 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { z } from "zod";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { sendOutlookMail } from "@/lib/outlook-mail";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 
-const execFileAsync = promisify(execFile);
 const payloadSchema = z.object({ recipients: z.array(z.string().email()).min(1) });
-
-async function sendOutlookMail({ recipients, subject, htmlBody, attachment }: { recipients: string[]; subject: string; htmlBody: string; attachment: string }) {
-  const command = `
-$outlook = New-Object -ComObject Outlook.Application
-$mail = $outlook.CreateItem(0)
-$mail.To = ${JSON.stringify(recipients.join(";"))}
-$mail.Subject = ${JSON.stringify(subject)}
-$mail.HTMLBody = ${JSON.stringify(htmlBody)}
-$mail.Attachments.Add(${JSON.stringify(attachment)}) | Out-Null
-$mail.Send()
-`;
-  await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { timeout: 60000 });
-}
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const role = getRequestRole(request);
@@ -38,7 +23,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const reportDate = new Intl.DateTimeFormat("es-CL", { dateStyle: "long", timeZone: "UTC" }).format(original.reportDate);
     await sendOutlookMail({
       recipients: payload.recipients,
-    subject: `REPORTE DE ENTREGA DIARIA ${sendDate}`,
+      subject: `REPORTE DE ENTREGA DIARIA ${sendDate}`,
       htmlBody: `
 <div style="font-family: Arial, sans-serif; font-size: 11pt; color: #111111;">
   <p>Estimado(s),</p>
@@ -47,7 +32,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   <p style="font-weight:700; color:#CE4620;">Departamento de Planificacion</p>
   <p style="font-size:9pt; color:#777777;">Control de Entregas - Formatto</p>
 </div>`,
-      attachment: original.filePath
+      attachment: original.filePath,
     });
   } catch (err) {
     status = "error";

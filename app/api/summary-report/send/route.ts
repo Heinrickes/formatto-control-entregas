@@ -1,12 +1,9 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { z } from "zod";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
+import { sendOutlookMail } from "@/lib/outlook-mail";
 import { getSummaryReport, saveSummaryReportPdf } from "@/lib/summary-report";
-
-const execFileAsync = promisify(execFile);
 
 export const dynamic = "force-dynamic";
 
@@ -21,27 +18,6 @@ function escapeHtml(value: string) {
 
 function displayDate(value = new Date()) {
   return new Intl.DateTimeFormat("es-CL", { dateStyle: "short", timeZone: "America/Santiago" }).format(value);
-}
-
-async function sendOutlookMail({ recipients, subject, htmlBody, attachment }: { recipients: string[]; subject: string; htmlBody: string; attachment: string }) {
-  const command = `
-$outlook = New-Object -ComObject Outlook.Application
-$mail = $outlook.CreateItem(0)
-$mail.To = @'
-${recipients.join(";")}
-'@
-$mail.Subject = @'
-${subject}
-'@
-$mail.HTMLBody = @'
-${htmlBody}
-'@
-$mail.Attachments.Add(@'
-${attachment}
-'@) | Out-Null
-$mail.Send()
-`;
-  await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { timeout: 60000 });
 }
 
 export async function POST(request: NextRequest) {
