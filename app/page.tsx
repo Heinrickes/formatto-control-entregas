@@ -2,21 +2,37 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, BarChart3, ClipboardList, Download, Edit3, Eye, EyeOff, History, LogOut, Plus, RefreshCw, Save, Shield, Trash2, Upload, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, BarChart3, Briefcase, Building2, CalendarClock, ClipboardList, Download, Edit3, Eye, EyeOff, FilterX, FolderKanban, History, Layers, ListFilter, LogOut, Plus, RefreshCw, Save, Search, Shield, SlidersHorizontal, Trash2, Upload, Users } from "lucide-react";
 import { SideNav } from "@/components/side-nav";
 import type { DashboardPayload, DispatchRow, DispatchState, ProgramSummary, Role } from "@/lib/client-types";
+import { cleanLocationValue, normalizeProjectName } from "@/lib/formatting";
 
 const businessLines = ["Constructora", "Particulares", "Retail", "Convenio Marco"] as const;
-const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "MARCOS CLOSET", "QUINCALLERIA", "ADICIONAL", "POST VENTA"];
+const projectTypes = ["Edificio", "Casas", "Mixto", "No aplica"] as const;
+const dispatchTypes = ["COCINA", "CLOSET", "BAÑO", "PUERTAS ABATIR", "PUERTAS CLOSET", "MARCOS CLOSET", "PIERNAS", "VANITORIO", "QUINCALLERIA", "ADICIONAL", "MUEBLE", "POST VENTA"];
+const fabricationTypes = ["RTA", "ARMADO"] as const;
+const productionStages = ["Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "Armado", "CD"] as const;
+const productionRoutes = {
+  RTA: ["Corte", "Enchape", "Perforado", "Consolidado", "Embalaje", "CD"],
+  ARMADO: ["Corte", "Enchape", "Perforado", "Consolidado", "Armado", "CD"]
+} as const;
 const APP_TIME_ZONE = "America/Santiago";
 const APP_TODAY = "";
 
 type TaskDraft = {
   businessLine: string;
   project: string;
+  projectType: string;
   type: string;
+  description: string;
   detail: string;
+  tower: string;
+  core: string;
+  floor: string;
+  fabricationType: string;
+  productionStage: string;
+  productionStartAt: string;
   units: string;
   scheduledAt: string;
 };
@@ -72,11 +88,21 @@ type PresenceRow = {
   lastActivity?: string | null;
 };
 
+type DashboardView = "dashboard" | "dispatch" | "urgent" | "tasks";
+
 const emptyTask = (): TaskDraft => ({
   businessLine: "Constructora",
   project: "",
+  projectType: "Edificio",
   type: "COCINA",
+  description: "",
   detail: "",
+  tower: "",
+  core: "",
+  floor: "",
+  fabricationType: "RTA",
+  productionStage: "Corte",
+  productionStartAt: "",
   units: "0",
   scheduledAt: todayOnly()
 });
@@ -205,21 +231,85 @@ function toTaskDraft(row: DispatchRow): TaskDraft {
   return {
     businessLine: row.businessLine ?? "Constructora",
     project: row.project,
+    projectType: row.projectType ?? "Edificio",
     type: row.type,
+    description: row.description ?? "",
     detail: row.detail ?? "",
+    tower: row.tower ?? "",
+    core: row.core ?? "",
+    floor: row.floor ?? "",
+    fabricationType: row.fabricationType ?? "RTA",
+    productionStage: row.productionStage ?? "Corte",
+    productionStartAt: dateOnly(row.productionStartAt),
     units: String(row.units ?? 0),
     scheduledAt: dateOnly(row.scheduledAt)
   };
 }
 
-function normalizeProjectName(value: string) {
-  const clean = value.trim().replace(/\s+/g, " ");
-  const upper = clean.toUpperCase();
-  if (upper === "LOS SAUCES" || upper === "EL SAUCE") return "EL SAUCE";
-  return upper;
+function houseLocationFromDetail(row: Pick<DispatchRow, "projectType" | "detail">) {
+  if (row.projectType !== "Casas" || !row.detail) return "";
+  const match = row.detail.match(/^casas?\s+(.+)/i);
+  return match?.[1]?.trim() ?? "";
 }
 
-export default function Home() {
+function locationDetail(row: Pick<DispatchRow, "projectType" | "tower" | "core" | "floor" | "detail">) {
+  if (row.projectType === "Casas") {
+    const houseValue = cleanLocationValue(row.floor, "piso") || houseLocationFromDetail(row);
+    return houseValue ? `Casa ${houseValue}` : "";
+  }
+  return [
+    cleanLocationValue(row.tower, "torre") ? `Torre ${cleanLocationValue(row.tower, "torre")}` : "",
+    cleanLocationValue(row.core, "nucleo") ? `Núcleo ${cleanLocationValue(row.core, "nucleo")}` : "",
+    cleanLocationValue(row.floor, "piso") ? `Piso ${cleanLocationValue(row.floor, "piso")}` : ""
+  ].filter(Boolean).join(" · ");
+}
+
+function displayDispatchDetail(row: DispatchRow) {
+  const detail = row.businessLine === "Constructora"
+    ? row.detail?.replace(new RegExp(`^${row.type}\\s*[-:·]?\\s*`, "i"), "").trim()
+    : row.detail;
+  const parts = row.businessLine === "Constructora"
+    ? [locationDetail(row), detail]
+    : [row.description, locationDetail(row), detail];
+  return parts.filter(Boolean).join(" · ") || "-";
+}
+
+function dispatchObservation(row: DispatchRow) {
+  if (row.businessLine === "Constructora") {
+    if (row.projectType === "Casas" && houseLocationFromDetail(row)) return "-";
+    return row.detail?.replace(new RegExp(`^${row.type}\\s*[-:·]?\\s*`, "i"), "").trim() || "-";
+  }
+  return [row.description, row.detail].filter(Boolean).join(" · ") || "-";
+}
+
+function productionRouteFor(type?: string | null) {
+  return type === "ARMADO" ? productionRoutes.ARMADO : productionRoutes.RTA;
+}
+
+function productionProgress(row: Pick<DispatchRow, "fabricationType" | "productionStage">) {
+  const route = productionRouteFor(row.fabricationType);
+  const currentIndex = Math.max(0, route.findIndex((stage) => stage === row.productionStage));
+  return { route, currentIndex, percent: route.length > 1 ? Math.round((currentIndex / (route.length - 1)) * 100) : 0 };
+}
+
+function productionWindow(row: Pick<DispatchRow, "productionStartAt" | "scheduledAt">) {
+  const days = businessDiffDays(row.productionStartAt ?? "", row.scheduledAt);
+  if (days === null) return { label: "Sin ingreso", tone: "text-[var(--mut)]", value: null };
+  if (days < 0) return { label: `${Math.abs(days)}d fuera`, tone: "text-[var(--bad)]", value: days };
+  if (days === 0) return { label: "Mismo dia", tone: "text-[var(--warn)]", value: days };
+  return { label: `${days}d prod.`, tone: "text-[var(--ok)]", value: days };
+}
+
+function unitLabel(row: Pick<DispatchRow, "businessLine" | "projectType" | "units">) {
+  const count = row.units || 0;
+  if ((row.businessLine ?? "Constructora") !== "Constructora") return `${count || "-"} muebles`;
+  if (row.projectType === "Casas") return `${count || "-"} casas`;
+  if (row.projectType === "Edificio") return `${count || "-"} deptos`;
+  if (row.projectType === "Mixto") return `${count || "-"} uds mixtas`;
+  return `${count || "-"} uds`;
+}
+
+export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: DashboardView }) {
   const [session, setSession] = useState<Session | null>(null);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [programId, setProgramId] = useState("");
@@ -238,7 +328,13 @@ export default function Home() {
   const [projectSort, setProjectSort] = useState<"prioridad" | "atraso" | "cumplimiento" | "nombre">("prioridad");
   const [timelineOffset, setTimelineOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [productionPendingIds, setProductionPendingIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
+  const productionRequestSeq = useRef(0);
+  const productionPendingRef = useRef<Record<string, { requestId: number; snapshot: DispatchRow; optimistic: DispatchRow }>>({});
+  const showDispatch = defaultView === "dashboard" || defaultView === "dispatch";
+  const showUrgent = defaultView === "dashboard" || defaultView === "urgent";
+  const showTasks = defaultView === "dashboard" || defaultView === "tasks";
 
   useEffect(() => {
     const raw = window.localStorage.getItem("formatto-session");
@@ -259,11 +355,24 @@ export default function Home() {
     if (active && !programId) setProgramId(active.id);
   }, [headers, programId]);
 
+  const keepPendingProduction = useCallback((nextPayload: DashboardPayload) => {
+    const pending = productionPendingRef.current;
+    if (Object.keys(pending).length === 0) return nextPayload;
+    const replaceDispatch = (rows: DispatchRow[] = []) =>
+      rows.map((row) => pending[row.id] ? { ...row, ...pending[row.id].optimistic } : row);
+    return {
+      ...nextPayload,
+      dispatches: replaceDispatch(nextPayload.dispatches),
+      program: nextPayload.program ? { ...nextPayload.program, dispatches: replaceDispatch(nextPayload.program.dispatches) } : nextPayload.program
+    };
+  }, []);
+
   const loadDashboard = useCallback(async (id = programId) => {
     const suffix = id ? `?programId=${id}` : "";
     const res = await fetch(`/api/dashboard${suffix}`, { headers });
-    setPayload(await res.json());
-  }, [headers, programId]);
+    const data = await res.json();
+    setPayload(keepPendingProduction(data));
+  }, [headers, keepPendingProduction, programId]);
 
   useEffect(() => {
     loadPrograms().catch(() => setMessage("No se pudo cargar el tablero. Revisa Supabase y DATABASE_URL."));
@@ -313,7 +422,7 @@ export default function Home() {
     }
     if (search.trim()) {
       const term = search.trim().toLowerCase();
-      rows = rows.filter((row) => [row.businessLine, row.project, row.type, row.detail, String(row.units)].join(" ").toLowerCase().includes(term));
+      rows = rows.filter((row) => [row.businessLine, row.project, row.type, row.description, row.detail, row.tower, row.core, row.floor, String(row.units)].join(" ").toLowerCase().includes(term));
     }
     return rows.slice().sort((a, b) => {
       const ta = timeState(a);
@@ -384,6 +493,21 @@ export default function Home() {
       partialRate: rate(partialTotal)
     };
   }, [payload]);
+  const productionMetrics = useMemo(() => {
+    const rows = payload?.dispatches ?? [];
+    const inProduction = rows.filter((row) => (row.productionStage ?? "Corte") !== "CD").length;
+    const cd = rows.filter((row) => row.productionStage === "CD").length;
+    const withoutStart = rows.filter((row) => !row.productionStartAt).length;
+    const leadTimes = rows
+      .map((row) => productionWindow(row).value)
+      .filter((value): value is number => value !== null && value >= 0);
+    return {
+      inProduction,
+      cd,
+      withoutStart,
+      averageLead: leadTimes.length ? Math.round(leadTimes.reduce((sum, value) => sum + value, 0) / leadTimes.length) : null
+    };
+  }, [payload]);
   const checkedRows = useMemo(() => dispatches.filter((row) => checked.includes(row.id)), [checked, dispatches]);
   const selectedProjectPerformance = useMemo(() => {
     if (projectFilter === "todos") return null;
@@ -420,6 +544,14 @@ export default function Home() {
       return (b.performance?.lateRate ?? 0) - (a.performance?.lateRate ?? 0);
     });
   }, [dispatches, payload, projectSort]);
+  const groupedByBusinessLine = useMemo(() => {
+    return businessLines
+      .map((line) => ({
+        line,
+        groups: groupedDispatches.filter((group) => (group.rows[0]?.businessLine ?? "Constructora") === line)
+      }))
+      .filter((section) => section.groups.length > 0);
+  }, [groupedDispatches]);
   const urgentRows = useMemo(() => {
     return (payload?.dispatches ?? [])
       .filter((row) => (row.status?.state ?? "pendiente") !== "despachado")
@@ -463,6 +595,21 @@ export default function Home() {
     setCollapsedProjects([]);
   }
 
+  function patchDispatchLocally(nextDispatch: DispatchRow) {
+    const replaceDispatch = (rows: DispatchRow[] = []) =>
+      rows.map((row) => row.id === nextDispatch.id ? { ...row, ...nextDispatch } : row);
+
+    setPayload((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        dispatches: replaceDispatch(current.dispatches),
+        program: current.program ? { ...current.program, dispatches: replaceDispatch(current.program.dispatches) } : current.program
+      };
+    });
+    setSelected((current) => current?.id === nextDispatch.id ? { ...current, ...nextDispatch } : current);
+  }
+
   async function ensureProgram() {
     if (activeProgram?.id) return activeProgram.id;
 
@@ -491,8 +638,16 @@ export default function Home() {
       const body = JSON.stringify({
         businessLine: draft.businessLine,
         project: normalizeProjectName(draft.project),
+        projectType: draft.projectType,
         type: draft.type,
+        description: draft.businessLine === "Constructora" ? null : draft.description.trim() || null,
         detail: draft.detail.trim() || null,
+        tower: cleanLocationValue(draft.tower, "torre") || null,
+        core: cleanLocationValue(draft.core, "nucleo") || null,
+        floor: cleanLocationValue(draft.floor, "piso") || null,
+        fabricationType: draft.fabricationType,
+        productionStage: draft.productionStage,
+        productionStartAt: draft.productionStartAt || null,
         units: Number(draft.units) || 0,
         scheduledAt: draft.scheduledAt,
         source: "manual"
@@ -533,21 +688,97 @@ export default function Home() {
   }
 
   async function saveStatus(row: DispatchRow, state: DispatchState, actualAt: string, notes: string, completionDueAt?: string) {
+    const completeProduction = state === "despachado" && row.productionStage !== "CD"
+      ? window.confirm("Esta entrega quedara como despachada. Deseas marcar tambien la produccion completa en CD?")
+      : false;
     setBusy(true);
     const res = await fetch(`/api/dispatches/${row.id}/status`, {
       method: "PATCH",
       headers,
       body: JSON.stringify({ state, actualAt: actualAt || null, completionDueAt: completionDueAt || null, notes })
     });
-    setBusy(false);
     if (!res.ok) {
       const error = await res.json().catch(() => ({}));
+      setBusy(false);
       setMessage(error.error ?? "No se pudo guardar el estado.");
       return;
     }
-    setSelected(null);
-    setMessage("Estado guardado correctamente.");
+    const data = await res.json();
+    let nextRow = { ...row, status: data.status } as DispatchRow;
+    patchDispatchLocally(nextRow);
+
+    let productionWarning = "";
+    if (completeProduction) {
+      const productionRow = { ...nextRow, productionStage: "CD" } as DispatchRow;
+      patchDispatchLocally(productionRow);
+      const productionRes = await fetch(`/api/dispatches/${row.id}/production`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          fabricationType: row.fabricationType ?? "RTA",
+          productionStage: "CD",
+          productionStartAt: row.productionStartAt ? dateOnly(row.productionStartAt) : null
+        })
+      });
+      if (productionRes.ok) {
+        const productionData = await productionRes.json();
+        nextRow = productionData.dispatch;
+        patchDispatchLocally(nextRow);
+      } else {
+        productionWarning = "Estado guardado. No se pudo marcar produccion en CD.";
+      }
+    }
+
     await loadDashboard();
+    setBusy(false);
+    setMessage(productionWarning || (completeProduction ? "Guardado correctamente. Produccion marcada en CD." : "Guardado correctamente."));
+  }
+
+  async function saveProduction(row: DispatchRow, productionStage: string, fabricationType = row.fabricationType ?? "RTA", productionStartAt = row.productionStartAt ? dateOnly(row.productionStartAt) : "") {
+    const requestId = productionRequestSeq.current + 1;
+    productionRequestSeq.current = requestId;
+    const optimistic = {
+      ...row,
+      fabricationType,
+      productionStage,
+      productionStartAt: productionStartAt || null
+    } as DispatchRow;
+
+    productionPendingRef.current[row.id] = { requestId, snapshot: row, optimistic };
+    setProductionPendingIds((current) => Array.from(new Set([...current, row.id])));
+    patchDispatchLocally(optimistic);
+
+    try {
+      const res = await fetch(`/api/dispatches/${row.id}/production`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ fabricationType, productionStage, productionStartAt: productionStartAt || null })
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        if (productionPendingRef.current[row.id]?.requestId === requestId) {
+          patchDispatchLocally(productionPendingRef.current[row.id].snapshot);
+          delete productionPendingRef.current[row.id];
+          setProductionPendingIds((current) => current.filter((id) => id !== row.id));
+          setMessage(error.error ?? "No se pudo actualizar producción.");
+        }
+        return;
+      }
+      const data = await res.json();
+      if (productionPendingRef.current[row.id]?.requestId === requestId) {
+        patchDispatchLocally(data.dispatch);
+        delete productionPendingRef.current[row.id];
+        setProductionPendingIds((current) => current.filter((id) => id !== row.id));
+        setMessage("");
+      }
+    } catch {
+      if (productionPendingRef.current[row.id]?.requestId === requestId) {
+        patchDispatchLocally(productionPendingRef.current[row.id].snapshot);
+        delete productionPendingRef.current[row.id];
+        setProductionPendingIds((current) => current.filter((id) => id !== row.id));
+        setMessage("No se pudo actualizar producción.");
+      }
+    }
   }
 
   async function saveBulkStatus(draft: BulkDraft) {
@@ -581,6 +812,7 @@ export default function Home() {
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
     const targetProgramId = await ensureProgram();
     let created = 0;
+    let updated = 0;
     let skipped = 0;
 
     for (const row of rows) {
@@ -591,6 +823,7 @@ export default function Home() {
       };
       const project = get("proyecto");
       const scheduledAt = get("fecha despacho", "fecha");
+      const dispatchId = get("id", "dispatch id", "tarea id");
       if (!project || !scheduledAt) {
         skipped++;
         continue;
@@ -598,40 +831,49 @@ export default function Home() {
       const date = scheduledAt.length >= 10 ? scheduledAt.slice(0, 10) : dateOnly(new Date(scheduledAt).toISOString());
       const rawBusinessLine = get("linea negocio", "linea de negocio", "línea negocio", "línea de negocio");
       const businessLine = businessLines.find((line) => line.toLowerCase() === rawBusinessLine.toLowerCase()) ?? "Constructora";
+      const rawProjectType = get("tipo proyecto", "tipo de proyecto", "clasificacion proyecto", "clasificación proyecto");
+      const projectType = projectTypes.find((type) => type.toLowerCase() === rawProjectType.toLowerCase())
+        ?? (businessLine === "Constructora" ? "Edificio" : "No aplica");
       const tower = get("torre");
       const core = get("nucleo", "nucleos", "núcleo", "núcleos");
       const floor = get("piso");
-      const description = get("descripcion", "descripción");
+      const rawFabricationType = get("fabricacion", "fabricación", "tipo fabricacion", "tipo fabricación", "va armado", "rta");
+      const fabricationType = rawFabricationType.toLowerCase().includes("armado") ? "ARMADO" : "RTA";
+      const rawProductionStage = get("estado produccion", "estado producción", "etapa produccion", "etapa producción", "produccion", "producción");
+      const productionStage = productionStages.find((stage) => stage.toLowerCase() === rawProductionStage.toLowerCase()) ?? "Corte";
+      const productionStartAt = get("fecha ingreso produccion", "fecha ingreso producción", "ingreso produccion", "ingreso producción");
+      const description = businessLine === "Constructora" ? "" : get("descripcion", "descripción");
       const observation = get("observacion", "observación", "obs");
+      const houseFromObservation = projectType === "Casas" ? observation.match(/^casas?\s+(.+)/i)?.[1]?.trim() ?? "" : "";
       const units = Number(get("deptos/casas", "depto/casa", "deptos", "depto", "casas", "casa", "unidades")) || 0;
-      const detail = [
-        tower ? `Torre ${tower}` : "",
-        core ? `Nucleo ${core}` : "",
-        floor ? `Piso ${floor}` : "",
-        description,
-        observation
-      ].filter(Boolean).join(" · ");
-      const res = await fetch(`/api/programs/${targetProgramId}/dispatches`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          businessLine,
-          project,
-          type: get("tipo", "conjunto") || "COCINA",
-          detail,
-          tower: tower || null,
-          core: core || null,
-          floor: floor || null,
-          units,
-          scheduledAt: date,
-          source: "excel"
-        })
+      const body = JSON.stringify({
+        businessLine,
+        project: normalizeProjectName(project),
+        projectType,
+        type: get("tipo", "conjunto") || "COCINA",
+        description: description || null,
+        detail: houseFromObservation ? null : observation || null,
+        tower: cleanLocationValue(tower, "torre") || null,
+        core: cleanLocationValue(core, "nucleo") || null,
+        floor: cleanLocationValue(floor || houseFromObservation, "piso") || null,
+        fabricationType,
+        productionStage,
+        productionStartAt: productionStartAt ? (productionStartAt.length >= 10 ? productionStartAt.slice(0, 10) : dateOnly(new Date(productionStartAt).toISOString())) : null,
+        units,
+        scheduledAt: date,
+        source: "excel"
       });
-      if (res.ok) created++;
+      const res = await fetch(dispatchId ? `/api/dispatches/${dispatchId}` : `/api/programs/${targetProgramId}/dispatches`, {
+        method: dispatchId ? "PATCH" : "POST",
+        headers,
+        body
+      });
+      if (res.ok) dispatchId ? updated++ : created++;
+      else skipped++;
     }
 
     setBusy(false);
-    setMessage(`Importadas ${created} tareas al tablero actual.${skipped ? ` ${skipped} filas omitidas por falta de proyecto o fecha.` : ""}`);
+    setMessage(`Carga lista: ${created} nuevas, ${updated} actualizadas.${skipped ? ` ${skipped} filas omitidas o con error.` : ""}`);
     await loadDashboard(targetProgramId);
   }
 
@@ -673,7 +915,7 @@ export default function Home() {
       {message && <div className="mx-6 mt-4 border-l-4 border-[var(--org)] bg-[#faece7] px-4 py-2 text-xs text-[#8b2500]">{message}</div>}
 
       <section className="px-6 py-4">
-          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-9">
+          <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-12">
           {[
             { label: "Total", value: summary.total },
             { label: "Proyectos", value: summary.projects },
@@ -683,7 +925,10 @@ export default function Home() {
             { label: "Atraso", value: `${totalBuckets.lateRate}%`, count: totalBuckets.late },
             { label: "On time", value: `${totalBuckets.onTimeRate}%`, count: totalBuckets.onTime },
             { label: "Adelanto", value: `${totalBuckets.earlyRate}%`, count: totalBuckets.early },
-            { label: "Pendiente", value: `${totalBuckets.pendingRate}%`, count: totalBuckets.pending }
+            { label: "Pendiente", value: `${totalBuckets.pendingRate}%`, count: totalBuckets.pending },
+            { label: "Producción", value: productionMetrics.inProduction },
+            { label: "CD", value: productionMetrics.cd },
+            { label: "Lead prod.", value: productionMetrics.averageLead === null ? "-" : `${productionMetrics.averageLead}d`, count: productionMetrics.withoutStart ? `${productionMetrics.withoutStart} sin ingreso` : undefined }
           ].map((item) => (
             <DashboardMetric key={item.label} label={item.label} value={item.value} count={item.count} />
           ))}
@@ -742,12 +987,34 @@ export default function Home() {
             </div>
           )}
 
-          <div className="mb-6 grid grid-cols-1 gap-4">
-            <TimelinePanel rows={timelineRows} offset={timelineOffset} onMove={setTimelineOffset} onSelect={setSelected} />
-            <UrgentPanel items={urgentRows} onSelect={setSelected} />
-          </div>
+          <FilterToolbar
+            projects={projects}
+            businessLines={availableBusinessLines}
+            businessLineFilter={businessLineFilter}
+            typeFilter={typeFilter}
+            stateFilter={stateFilter}
+            projectFilter={projectFilter}
+            timeFilter={timeFilter}
+            search={search}
+            projectSort={projectSort}
+            onBusinessLineFilter={setBusinessLineFilter}
+            onTypeFilter={setTypeFilter}
+            onStateFilter={setStateFilter}
+            onProjectFilter={setProjectFilter}
+            onTimeFilter={setTimeFilter}
+            onSearch={setSearch}
+            onProjectSort={setProjectSort}
+            onClearFilters={() => { setBusinessLineFilter("todos"); setTypeFilter("todos"); setProjectFilter("todos"); setStateFilter("todos"); setTimeFilter("todos"); setSearch(""); }}
+          />
 
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          {(showDispatch || showUrgent) && (
+            <div className="mb-6 grid grid-cols-1 gap-4">
+              {showDispatch && <TimelinePanel rows={timelineRows} offset={timelineOffset} onMove={setTimelineOffset} onSelect={setSelected} />}
+              {showUrgent && <UrgentPanel items={urgentRows} onSelect={setSelected} />}
+            </div>
+          )}
+
+          {showTasks && <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="text-lg font-semibold">Panel de Control de Tareas</div>
               <div className="text-xs text-[var(--mut)]">{dispatches.length} tareas encontradas</div>
@@ -757,9 +1024,9 @@ export default function Home() {
               <button className="thin-button" onClick={collapseAllProjects}>Colapsar todo</button>
               <button className="thin-button" onClick={expandAllProjects}>Expandir todo</button>
             </div>
-        </div>
+        </div>}
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_360px]">
+        {showTasks && <div className="grid gap-4 xl:grid-cols-[minmax(720px,1fr)_360px]">
           <div>
           {selectedProjectPerformance && (
             <div className="mb-3 grid grid-cols-2 gap-2 border border-[var(--g2)] bg-white p-3 md:grid-cols-6">
@@ -778,50 +1045,68 @@ export default function Home() {
         <BulkStatusBar count={checked.length} rows={checkedRows} role={role} busy={busy} onClear={() => setChecked([])} onSave={saveBulkStatus} />
 
         <div className="overflow-x-auto border border-[var(--g2)]">
-          <div className="min-w-[720px] bg-white">
-            <div className="grid grid-cols-[32px_1.45fr_104px_104px_86px_38px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
+          <div className="min-w-[1240px] bg-white">
+            <div className="grid grid-cols-[30px_minmax(118px,0.58fr)_145px_82px_82px_74px_minmax(390px,1fr)_34px] border-b border-[var(--g2)] bg-[var(--blk)] px-2 py-1.5 text-[9px] uppercase tracking-[0.06em] text-white">
               <button className="text-left" onClick={toggleAllVisible}>Sel</button>
-              <div>Entrega</div><div>Programación</div><div>Resultado</div><div>Estado</div><div></div>
+              <div>Entrega</div><div>Ubicación</div><div>Programación</div><div>Resultado</div><div>Estado</div><div className="border-l border-white/25 pl-3">Producción</div><div></div>
             </div>
-            {groupedDispatches.map((group) => (
-              <div key={group.project} className="border-b border-[var(--g2)]">
-                <ProjectGroupHeader
-                  group={group}
-                  collapsed={collapsedProjects.includes(group.project)}
-                  allSelected={group.rows.every((row) => checked.includes(row.id))}
-                  onToggle={() => toggleProject(group.project)}
-                  onSelectAll={() => toggleProjectSelection(group.rows)}
-                />
-                {!collapsedProjects.includes(group.project) && group.rows.map((row) => {
-                  const state = row.status?.state ?? "pendiente";
-                  const time = timeState(row);
-                  const rowTone =
-                    state !== "despachado" && time.value > 0 ? "bg-[#fff7f5]" :
-                    state !== "despachado" && time.value === 0 ? "bg-[#fffaf0]" :
-                    state === "despachado" ? "opacity-70" : "";
-                  const resultDiff = row.status?.actualAt ? businessDiffDays(row.scheduledAt, row.status.actualAt) : null;
-                  return (
-                    <div key={row.id} className={`grid grid-cols-[32px_1.45fr_104px_104px_86px_38px] items-center border-t border-[var(--g2)] px-2 py-1.5 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
-                      <input type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
-                      <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
-                        <div className="truncate font-semibold">{row.type} · {row.detail || "-"}</div>
-                        <div className="text-[10px] text-[var(--mut)]">{row.units || "-"} uds</div>
-                      </button>
-                      <button className="text-left" onClick={() => setSelected(row)}>
-                        <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
-                        <div className={`text-[10px] ${time.tone}`}>{time.label}</div>
-                      </button>
-                      <button className="text-left" onClick={() => setSelected(row)}>
-                        <div className="font-semibold">{shortDate(row.status?.actualAt)}</div>
-                        <div className="text-[10px] text-[var(--mut)]">
-                          {resultDiff === null ? "Sin resultado" : resultDiff === 0 ? "En fecha" : resultDiff > 0 ? `+${resultDiff}d` : `${resultDiff}d`}
+            {groupedByBusinessLine.map((section) => (
+              <div key={section.line}>
+                <div className="border-t border-[var(--g2)] bg-[var(--g1)] px-3 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--blk)]">
+                  {section.line.toUpperCase()}
+                </div>
+                {section.groups.map((group) => (
+                  <div key={`${section.line}-${group.project}`} className="border-b border-[var(--g2)]">
+                    <ProjectGroupHeader
+                      group={group}
+                      collapsed={collapsedProjects.includes(group.project)}
+                      allSelected={group.rows.every((row) => checked.includes(row.id))}
+                      onToggle={() => toggleProject(group.project)}
+                      onSelectAll={() => toggleProjectSelection(group.rows)}
+                    />
+                    {!collapsedProjects.includes(group.project) && group.rows.map((row) => {
+                      const state = row.status?.state ?? "pendiente";
+                      const time = timeState(row);
+                      const rowTone =
+                        state !== "despachado" && time.value > 0 ? "bg-[#fff7f5]" :
+                        state !== "despachado" && time.value === 0 ? "bg-[#fffaf0]" :
+                        state === "despachado" ? "opacity-70" : "";
+                      const resultDiff = row.status?.actualAt ? businessDiffDays(row.scheduledAt, row.status.actualAt) : null;
+                      return (
+                        <div key={row.id} className={`grid grid-cols-[30px_minmax(118px,0.58fr)_145px_82px_82px_74px_minmax(390px,1fr)_34px] items-stretch border-t border-[var(--g2)] px-2 py-2 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
+                          <input type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
+                          <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
+                            <div className="font-semibold">{row.type}</div>
+                            <div className="whitespace-normal break-words text-[10px] leading-snug text-[var(--mut)]">{dispatchObservation(row)}</div>
+                          </button>
+                        <button className="min-w-0 text-left" onClick={() => setSelected(row)}>
+                          <div className="break-words font-semibold">{locationDetail(row) || "-"}</div>
+                          <div className="text-[10px] text-[var(--mut)]">{unitLabel(row)}</div>
+                        </button>
+                          <button className="text-left" onClick={() => setSelected(row)}>
+                            <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
+                            <div className={`text-[10px] ${time.tone}`}>{time.label}</div>
+                          </button>
+                          <button className="text-left" onClick={() => setSelected(row)}>
+                            <div className="font-semibold">{shortDate(row.status?.actualAt)}</div>
+                            <div className="text-[10px] text-[var(--mut)]">
+                              {resultDiff === null ? "Sin resultado" : resultDiff === 0 ? "En fecha" : resultDiff > 0 ? `+${resultDiff}d` : `${resultDiff}d`}
+                            </div>
+                          </button>
+                          <div><span className={`status-badge ${statusClass(state)}`}>{state}</span></div>
+                          <div className="min-w-0 border-l border-[var(--g2)] bg-white/70 py-1 pl-3 pr-2 text-left">
+                            <ProductionProgress row={row} compact saving={productionPendingIds.includes(row.id)} disabled={role === "lector"} onStageChange={(stage) => saveProduction(row, stage)} />
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-[var(--mut)]">
+                              <span>Ingreso {shortDate(row.productionStartAt)}</span>
+                              <span className={productionWindow(row).tone}>{productionWindow(row).label}</span>
+                            </div>
+                          </div>
+                          <button className="thin-button p-2" disabled={role !== "admin"} onClick={() => setTaskModal({ mode: "edit", row })} title="Editar tarea"><Edit3 size={13} /></button>
                         </div>
-                      </button>
-                      <div><span className={`status-badge ${statusClass(state)}`}>{state}</span></div>
-                      <button className="thin-button p-2" disabled={role !== "admin"} onClick={() => setTaskModal({ mode: "edit", row })} title="Editar tarea"><Edit3 size={13} /></button>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -850,7 +1135,7 @@ export default function Home() {
             onProject={(project) => setProjectFilter((current) => current === project ? "todos" : project)}
             onSelect={setSelected}
           />
-        </div>
+        </div>}
       </section>
 
       {selected && (
@@ -858,10 +1143,13 @@ export default function Home() {
           row={selected}
           role={role}
           busy={busy}
+          productionSaving={productionPendingIds.includes(selected.id)}
+          message={/Guardado|No se pudo guardar|produccion/i.test(message) ? message : ""}
           onClose={() => setSelected(null)}
           onEdit={() => { setSelected(null); setTaskModal({ mode: "edit", row: selected }); }}
           onDelete={() => deleteTask(selected)}
           onSave={saveStatus}
+          onProductionSave={saveProduction}
         />
       )}
 
@@ -878,6 +1166,10 @@ export default function Home() {
       {auditModal && <AuditModal headers={headers} onClose={() => setAuditModal(false)} />}
     </main>
   );
+}
+
+export default function Home() {
+  return <DashboardApp defaultView="dashboard" />;
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
@@ -938,7 +1230,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: Session) => void }) {
   );
 }
 
-function DashboardMetric({ label, value, count }: { label: string; value: string | number; count?: number }) {
+function DashboardMetric({ label, value, count }: { label: string; value: string | number; count?: string | number }) {
   return (
     <div className="border border-[var(--g2)] border-t-[3px] border-t-[var(--org)] bg-white p-3">
       <div className="text-[9px] uppercase tracking-[0.07em] text-[var(--mut)]">{label}</div>
@@ -1241,6 +1533,110 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function FilterToolbar({
+  projects,
+  businessLines,
+  businessLineFilter,
+  typeFilter,
+  stateFilter,
+  projectFilter,
+  timeFilter,
+  search,
+  projectSort,
+  onBusinessLineFilter,
+  onTypeFilter,
+  onStateFilter,
+  onProjectFilter,
+  onTimeFilter,
+  onSearch,
+  onProjectSort,
+  onClearFilters
+}: {
+  projects: string[];
+  businessLines: string[];
+  businessLineFilter: string;
+  typeFilter: string;
+  stateFilter: DispatchState | "todos";
+  projectFilter: string;
+  timeFilter: "todos" | "atrasadas" | "hoy" | "proximas";
+  search: string;
+  projectSort: "prioridad" | "atraso" | "cumplimiento" | "nombre";
+  onBusinessLineFilter: (value: string) => void;
+  onTypeFilter: (value: string) => void;
+  onStateFilter: (value: DispatchState | "todos") => void;
+  onProjectFilter: (value: string) => void;
+  onTimeFilter: (value: "todos" | "atrasadas" | "hoy" | "proximas") => void;
+  onSearch: (value: string) => void;
+  onProjectSort: (value: "prioridad" | "atraso" | "cumplimiento" | "nombre") => void;
+  onClearFilters: () => void;
+}) {
+  const fieldWrap = "flex min-w-[150px] flex-1 items-center gap-2 border border-[var(--g2)] bg-white px-2 py-1.5";
+  const iconClass = "shrink-0 text-[var(--org)]";
+  const selectClass = "min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[var(--blk)] outline-none";
+  const inputClass = "min-w-0 flex-1 bg-transparent text-[11px] font-semibold text-[var(--blk)] outline-none";
+
+  return (
+    <div className="mb-4 border border-[var(--g2)] bg-[var(--g1)] p-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-[210px] flex-[1.4] items-center gap-2 border border-[var(--g2)] bg-white px-2 py-1.5">
+          <Search size={15} className={iconClass} />
+          <input className={inputClass} value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar proyecto, conjunto, piso..." />
+        </div>
+        <label className={fieldWrap} title="Linea de negocio">
+          <Building2 size={15} className={iconClass} />
+          <select className={selectClass} value={businessLineFilter} onChange={(event) => onBusinessLineFilter(event.target.value)}>
+            {businessLines.map((line) => <option key={line} value={line}>{line === "todos" ? "Todas las lineas" : line}</option>)}
+          </select>
+        </label>
+        <label className={fieldWrap} title="Proyecto">
+          <FolderKanban size={15} className={iconClass} />
+          <select className={selectClass} value={projectFilter} onChange={(event) => onProjectFilter(event.target.value)}>
+            {projects.map((project) => <option key={project} value={project}>{project === "todos" ? "Todos los proyectos" : project}</option>)}
+          </select>
+        </label>
+        <label className={fieldWrap} title="Conjunto">
+          <Layers size={15} className={iconClass} />
+          <select className={selectClass} value={typeFilter} onChange={(event) => onTypeFilter(event.target.value)}>
+            <option value="todos">Todos los conjuntos</option>
+            {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+        <label className={fieldWrap} title="Estado despacho">
+          <ListFilter size={15} className={iconClass} />
+          <select className={selectClass} value={stateFilter} onChange={(event) => onStateFilter(event.target.value as DispatchState | "todos")}>
+            <option value="todos">Todos los estados</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="parcial">Parcial</option>
+            <option value="despachado">Despachado</option>
+            <option value="cambio">Cambio</option>
+          </select>
+        </label>
+        <label className={fieldWrap} title="Tiempo">
+          <CalendarClock size={15} className={iconClass} />
+          <select className={selectClass} value={timeFilter} onChange={(event) => onTimeFilter(event.target.value as "todos" | "atrasadas" | "hoy" | "proximas")}>
+            <option value="todos">Todo calendario</option>
+            <option value="atrasadas">Atrasadas</option>
+            <option value="hoy">Hoy</option>
+            <option value="proximas">Proximas 7 dias</option>
+          </select>
+        </label>
+        <label className={fieldWrap} title="Orden">
+          <SlidersHorizontal size={15} className={iconClass} />
+          <select className={selectClass} value={projectSort} onChange={(event) => onProjectSort(event.target.value as "prioridad" | "atraso" | "cumplimiento" | "nombre")}>
+            <option value="prioridad">Prioridad</option>
+            <option value="atraso">Atraso</option>
+            <option value="cumplimiento">Cumplimiento</option>
+            <option value="nombre">A-Z</option>
+          </select>
+        </label>
+        <button className="thin-button inline-flex items-center justify-center p-2" onClick={onClearFilters} title="Limpiar filtros">
+          <FilterX size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OperationsSummaryPanel({
   groups,
   rows,
@@ -1329,67 +1725,6 @@ function OperationsSummaryPanel({
   return (
     <aside className="space-y-3">
       <section className="border border-[var(--g2)] bg-white p-3">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Filtros</div>
-          <button className="thin-button px-2 py-1" onClick={onClearFilters}>Limpiar</button>
-        </div>
-        <div className="grid gap-2">
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Buscar</label>
-            <input className="field" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Proyecto, conjunto, piso..." />
-          </div>
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Orden</label>
-            <select className="field" value={projectSort} onChange={(event) => onProjectSort(event.target.value as "prioridad" | "atraso" | "cumplimiento" | "nombre")}>
-              <option value="prioridad">Orden natural operativo</option>
-              <option value="atraso">Ordenar por atraso</option>
-              <option value="cumplimiento">Menor cumplimiento</option>
-              <option value="nombre">Ordenar A-Z</option>
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Línea de negocio</label>
-            <select className="field" value={businessLineFilter} onChange={(event) => onBusinessLineFilter(event.target.value)}>
-              {businessLines.map((line) => <option key={line} value={line}>{line === "todos" ? "Todas las líneas" : line}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Proyecto</label>
-            <select className="field" value={projectFilter} onChange={(event) => onProjectFilter(event.target.value)}>
-              {projects.map((project) => <option key={project} value={project}>{project === "todos" ? "Todos los proyectos" : project}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Categoria</label>
-            <select className="field" value={typeFilter} onChange={(event) => onTypeFilter(event.target.value)}>
-              <option value="todos">Todas las categorias</option>
-              {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado</label>
-              <select className="field" value={stateFilter} onChange={(event) => onStateFilter(event.target.value as DispatchState | "todos")}>
-                <option value="todos">Todos</option>
-                <option value="pendiente">Pendiente</option>
-                <option value="parcial">Parcial</option>
-                <option value="despachado">Despachado</option>
-                <option value="cambio">Cambio</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Tiempo</label>
-              <select className="field" value={timeFilter} onChange={(event) => onTimeFilter(event.target.value as "todos" | "atrasadas" | "hoy" | "proximas")}>
-                <option value="todos">Todos</option>
-                <option value="atrasadas">Atrasadas</option>
-                <option value="hoy">Hoy</option>
-                <option value="proximas">Proximas</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </section>
-      <section className="border border-[var(--g2)] bg-white p-3">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--mut)]">Resumen operativo</div>
         <div className="grid grid-cols-2 gap-2">
           <button className="text-left" onClick={() => toggleState("pendiente")} title="Ver pendientes en la tabla"><Metric label="Pendientes" value={pending.length} /></button>
@@ -1422,7 +1757,7 @@ function OperationsSummaryPanel({
           {critical.map((row) => (
             <button key={row.id} className="w-full bg-[#fff7f5] p-2 text-left hover:bg-[#faece7]" onClick={() => onSelect(row)}>
               <div className="truncate text-xs font-bold">{row.project}</div>
-              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {displayDispatchDetail(row)}</div>
               <div className={`text-[10px] ${timeState(row).tone}`}>{timeState(row).label}</div>
             </button>
           ))}
@@ -1435,7 +1770,7 @@ function OperationsSummaryPanel({
           {lateDispatched.map((row) => (
             <button key={row.id} className="w-full bg-white p-2 text-left ring-1 ring-[var(--g2)] hover:bg-[var(--g1)]" onClick={() => onSelect(row)}>
               <div className="truncate text-xs font-bold">{row.project}</div>
-              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+              <div className="truncate text-[10px] text-[var(--mut)]">{row.type} · {displayDispatchDetail(row)}</div>
               <div className="text-[10px] text-[var(--bad)]">{timeState(row).label}</div>
             </button>
           ))}
@@ -1582,7 +1917,7 @@ function TimelinePanel({ rows, offset, onMove, onSelect }: {
                     return (
                       <button key={row.id} className="bg-white px-2 py-1 text-left shadow-sm hover:outline hover:outline-1 hover:outline-[var(--org)]" onClick={() => onSelect(row)}>
                         <div className="truncate text-[10px] font-bold text-[var(--org)]">{row.project}</div>
-                        <div className="truncate text-[9px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+                        <div className="truncate text-[9px] text-[var(--mut)]">{row.type} · {displayDispatchDetail(row)}</div>
                         <div className={`text-[9px] ${time.tone}`}>{time.label}</div>
                       </button>
                     );
@@ -1612,7 +1947,7 @@ function UrgentPanel({ items, onSelect }: { items: Array<{ row: DispatchRow; tim
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-semibold">{row.project}</div>
-                <div className="text-[11px] text-[var(--mut)]">{row.type} · {row.detail || "-"}</div>
+                <div className="text-[11px] text-[var(--mut)]">{row.type} · {displayDispatchDetail(row)}</div>
               </div>
               <span className="status-badge status-cambio">{time.label}</span>
             </div>
@@ -1654,6 +1989,57 @@ function BulkStatusBar({ count, rows, role, busy, onClear, onSave }: {
   );
 }
 
+function ProductionProgress({
+  row,
+  compact = false,
+  saving = false,
+  disabled = false,
+  onStageChange
+}: {
+  row: Pick<DispatchRow, "fabricationType" | "productionStage">;
+  compact?: boolean;
+  saving?: boolean;
+  disabled?: boolean;
+  onStageChange?: (stage: string) => void;
+}) {
+  const progress = productionProgress(row);
+  const canChange = Boolean(onStageChange) && !disabled;
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-[var(--blk)]">{row.fabricationType ?? "RTA"}</span>
+        <span className="text-[10px] text-[var(--mut)]">{row.productionStage ?? "Corte"} · {progress.percent}%{saving ? " · guardando" : ""}</span>
+      </div>
+      <div className="relative h-1.5 overflow-hidden bg-[var(--g2)]">
+        <div className="h-full bg-[var(--org)]" style={{ width: `${progress.percent}%` }} />
+      </div>
+      <div className={`mt-2 grid gap-1 ${compact ? "" : ""}`} style={{ gridTemplateColumns: `repeat(${progress.route.length}, minmax(0, 1fr))` }}>
+        {progress.route.map((stage, index) => {
+          const active = index <= progress.currentIndex;
+          const current = stage === (row.productionStage ?? "Corte");
+          const content = compact ? stage : stage;
+          return (
+            <button
+              key={stage}
+              type="button"
+              disabled={!canChange}
+              aria-pressed={current}
+              onClick={(event) => {
+                event.stopPropagation();
+                onStageChange?.(stage);
+              }}
+              className={`border-t-2 px-0.5 pt-1 text-center leading-tight ${compact ? "text-[8px]" : "text-[9px]"} ${current ? "border-[var(--org)] bg-[#faece7] font-bold text-[var(--org)]" : active ? "border-[var(--org)] text-[var(--blk)]" : "border-[var(--g2)] text-[var(--mut)]"} ${canChange ? "hover:bg-[#faece7] hover:text-[var(--org)]" : "cursor-default"}`}
+              title={canChange ? `Cambiar a ${stage}` : stage}
+            >
+              {content}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function TaskModal({ row, role, busy, onClose, onSave }: {
   row?: DispatchRow;
   role: Role;
@@ -1664,14 +2050,29 @@ function TaskModal({ row, role, busy, onClose, onSave }: {
   const [draft, setDraft] = useState<TaskDraft>(row ? toTaskDraft(row) : emptyTask());
   const readonly = role !== "admin";
   const valid = draft.project.trim() && draft.type && draft.scheduledAt;
+  const isConstructora = draft.businessLine === "Constructora";
+  const unitsLabel = !isConstructora ? "Cantidad de muebles" : draft.projectType === "Casas" ? "Cantidad de casas" : draft.projectType === "Edificio" ? "Cantidad de deptos" : "Cantidad de unidades";
 
   function setField(field: keyof TaskDraft, value: string) {
-    setDraft((current) => ({ ...current, [field]: value }));
+    setDraft((current) => {
+      if (field === "businessLine" && value !== "Constructora") {
+        return { ...current, businessLine: value, projectType: "No aplica", tower: "", core: "", floor: "" };
+      }
+      if (field === "businessLine" && value === "Constructora") {
+        return { ...current, businessLine: value, projectType: current.projectType === "No aplica" ? "Edificio" : current.projectType };
+      }
+      if (field === "fabricationType") {
+        const route = productionRouteFor(value);
+        const nextStage = route.some((stage) => stage === current.productionStage) ? current.productionStage : route[0];
+        return { ...current, fabricationType: value, productionStage: nextStage };
+      }
+      return { ...current, [field]: value };
+    });
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
-      <div className="w-[520px] max-w-full bg-white" onClick={(event) => event.stopPropagation()}>
+      <div className="w-[640px] max-w-full bg-white" onClick={(event) => event.stopPropagation()}>
         <div className="border-b border-[var(--g2)] px-5 py-4">
           <div className="text-sm font-bold uppercase tracking-[0.04em]">{row ? "Editar tarea" : "Agregar tarea"}</div>
           <div className="text-[11px] text-[var(--mut)]">Proyecto, conjunto, fecha programada y unidades.</div>
@@ -1681,17 +2082,61 @@ function TaskModal({ row, role, busy, onClose, onSave }: {
           <select className="field" value={draft.businessLine} disabled={readonly} onChange={(event) => setField("businessLine", event.target.value)}>
             {businessLines.map((line) => <option key={line} value={line}>{line}</option>)}
           </select>
-          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Proyecto</label>
-          <input className="field" value={draft.project} disabled={readonly} onChange={(event) => setField("project", event.target.value)} placeholder="Ej: VIENTO NORTE" />
+          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{isConstructora ? "Proyecto" : "Cliente / Canal / Entidad"}</label>
+          <input className="field" value={draft.project} disabled={readonly} onChange={(event) => setField("project", event.target.value)} placeholder={isConstructora ? "Ej: VIENTO NORTE" : "Ej: cliente particular, retail o convenio"} />
+          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Tipo proyecto</label>
+          <select className="field" value={draft.projectType} disabled={readonly || !isConstructora} onChange={(event) => setField("projectType", event.target.value)}>
+            {projectTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
           <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Conjunto</label>
           <select className="field" value={draft.type} disabled={readonly} onChange={(event) => setField("type", event.target.value)}>
             {dispatchTypes.map((type) => <option key={type} value={type}>{type}</option>)}
           </select>
-          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Detalle</label>
-          <input className="field" value={draft.detail} disabled={readonly} onChange={(event) => setField("detail", event.target.value)} placeholder="Torre, piso, nucleo, observacion" />
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Fabricación</label>
+              <select className="field" value={draft.fabricationType} disabled={readonly} onChange={(event) => setField("fabricationType", event.target.value)}>
+                {fabricationTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado producción</label>
+              <select className="field" value={draft.productionStage} disabled={readonly} onChange={(event) => setField("productionStage", event.target.value)}>
+                {productionRouteFor(draft.fabricationType).map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Ingreso producción</label>
+              <input className="field" type="date" value={draft.productionStartAt} disabled={readonly} onChange={(event) => setField("productionStartAt", event.target.value)} />
+            </div>
+          </div>
+          {!isConstructora && (
+            <>
+              <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Descripción</label>
+              <input className="field" value={draft.description} disabled={readonly} onChange={(event) => setField("description", event.target.value)} placeholder="Ej: mueble, producto, orden o requerimiento" />
+            </>
+          )}
+          {isConstructora && (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Torre</label>
+                <input className="field" value={draft.tower} disabled={readonly} onChange={(event) => setField("tower", event.target.value)} placeholder="No aplica si queda vacío" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Núcleo</label>
+                <input className="field" value={draft.core} disabled={readonly} onChange={(event) => setField("core", event.target.value)} placeholder="No aplica" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{draft.projectType === "Casas" ? "Casa" : "Piso"}</label>
+                <input className="field" value={draft.floor} disabled={readonly} onChange={(event) => setField("floor", event.target.value)} placeholder={draft.projectType === "Casas" ? "Ej: 49 - 53 - 55" : "No aplica"} />
+              </div>
+            </div>
+          )}
+          <label className="text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Observación</label>
+          <input className="field" value={draft.detail} disabled={readonly} onChange={(event) => setField("detail", event.target.value)} placeholder="Comentario operativo opcional" />
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Unidades</label>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{unitsLabel}</label>
               <input className="field" type="number" min="0" value={draft.units} disabled={readonly} onChange={(event) => setField("units", event.target.value)} />
             </div>
             <div>
@@ -1712,14 +2157,17 @@ function TaskModal({ row, role, busy, onClose, onSave }: {
   );
 }
 
-function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
+function StatusModal({ row, role, busy, productionSaving = false, message = "", onClose, onEdit, onDelete, onSave, onProductionSave }: {
   row: DispatchRow;
   role: Role;
   busy: boolean;
+  productionSaving?: boolean;
+  message?: string;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onSave: (row: DispatchRow, state: DispatchState, actualAt: string, notes: string, completionDueAt?: string) => void;
+  onProductionSave: (row: DispatchRow, productionStage: string, fabricationType?: DispatchRow["fabricationType"], productionStartAt?: string) => void;
 }) {
   const [state, setState] = useState<DispatchState>(row.status?.state ?? "pendiente");
   const [actualAt, setActualAt] = useState(dateOnly(row.status?.actualAt));
@@ -1729,6 +2177,7 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
   const readonly = role === "lector";
   const showDispatchSummary = state === "despachado" && Boolean(actualAt) && diff !== null;
   const currentTime = timeState(row);
+  const productionLeadTime = productionWindow(row);
   function chooseState(nextState: DispatchState) {
     setState(nextState);
     if (nextState !== "pendiente" && !actualAt) setActualAt(todayOnly());
@@ -1740,14 +2189,31 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
       <div className="max-h-[92vh] w-[480px] max-w-full overflow-y-auto bg-white" onClick={(event) => event.stopPropagation()}>
         <div className="border-b border-[var(--g2)] px-5 py-4">
           <div className="text-sm font-bold uppercase tracking-[0.04em]">{row.project} · {row.type}</div>
-          <div className="text-[11px] text-[var(--mut)]">{row.detail || "-"} · Programado {shortDate(row.scheduledAt)}</div>
+          <div className="text-[11px] text-[var(--mut)]">{displayDispatchDetail(row)} · Programado {shortDate(row.scheduledAt)}</div>
         </div>
         <div className="space-y-3 px-5 py-4">
+          {busy && <div className="border-l-4 border-[var(--org)] bg-[#faece7] px-3 py-2 text-xs font-semibold text-[#8b2500]">Guardando cambios...</div>}
+          {!busy && message && <div className="border-l-4 border-[var(--ok)] bg-[#edf7ee] px-3 py-2 text-xs font-semibold text-[#1f6b36]">{message}</div>}
           <div className="grid grid-cols-2 gap-2 text-[11px]">
-            <div className="bg-[var(--g1)] p-3"><b>Unidades</b><br />{row.units || "-"}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Línea</b><br />{row.businessLine ?? "Constructora"}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Tipo proyecto</b><br />{row.projectType ?? "Edificio"}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Unidades</b><br />{unitLabel(row)}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Fabricación</b><br />{row.fabricationType ?? "RTA"}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Ingreso producción</b><br />{shortDate(row.productionStartAt)}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Tiempo producción</b><br /><span className={productionLeadTime.tone}>{productionLeadTime.label}</span></div>
             <div className="bg-[var(--g1)] p-3"><b>Fecha programada</b><br />{shortDate(row.scheduledAt)}</div>
             <div className="bg-[var(--g1)] p-3"><b>Estado tiempo</b><br /><span className={currentTime.tone}>{currentTime.label}</span></div>
             <div className="bg-[var(--g1)] p-3"><b>Ultima actualizacion</b><br />{shortDate(row.status?.updatedAt)}</div>
+            {(row.businessLine ?? "Constructora") === "Constructora" && (
+              <>
+                <div className="bg-[var(--g1)] p-3"><b>Torre</b><br />{row.tower || "No aplica"}</div>
+                <div className="bg-[var(--g1)] p-3"><b>Núcleo</b><br />{row.core || "No aplica"}</div>
+                <div className="bg-[var(--g1)] p-3"><b>{row.projectType === "Casas" ? "Casa" : "Piso"}</b><br />{row.floor || houseLocationFromDetail(row) || "No aplica"}</div>
+              </>
+            )}
+          </div>
+          <div className="border border-[var(--g2)] p-3">
+            <ProductionProgress row={row} saving={productionSaving} disabled={role === "lector"} onStageChange={(stage) => onProductionSave(row, stage)} />
           </div>
           <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Estado</label>
           <div className="grid grid-cols-2 gap-2">
@@ -1794,7 +2260,7 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
                 </div>
                 <div className="bg-[var(--g1)] p-3">
                   <div className="text-[9px] uppercase text-[var(--mut)]">Unidades</div>
-                  <div className="font-semibold">{row.units || "-"} uds</div>
+                  <div className="font-semibold">{unitLabel(row)}</div>
                 </div>
                 <div className="bg-[var(--g1)] p-3">
                   <div className="text-[9px] uppercase text-[var(--mut)]">Resultado</div>
@@ -1824,7 +2290,7 @@ function StatusModal({ row, role, busy, onClose, onEdit, onDelete, onSave }: {
           </div>
           <div className="flex gap-2">
             <button className="thin-button" onClick={onClose}>Cancelar</button>
-            <button className="primary-button inline-flex items-center gap-2" disabled={busy || readonly} onClick={() => onSave(row, state, actualAt, notes, completionDueAt)}><Save size={14} />Guardar estado</button>
+            <button className="primary-button inline-flex items-center gap-2" disabled={busy || readonly} onClick={() => onSave(row, state, actualAt, notes, completionDueAt)}><Save size={14} />{busy ? "Guardando..." : "Guardar estado"}</button>
           </div>
         </div>
       </div>

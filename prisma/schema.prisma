@@ -109,11 +109,16 @@ model Dispatch {
   program     Program        @relation(fields: [programId], references: [id], onDelete: Cascade)
   businessLine String         @default("Constructora")
   project     String
+  projectType String          @default("Edificio")
   type        String
+  description String?
   detail      String?
   tower       String?
   core        String?
   floor       String?
+  fabricationType String       @default("RTA")
+  productionStage String       @default("Corte")
+  productionStartAt DateTime?
   units       Int            @default(0)
   scheduledAt DateTime
   source      DispatchSource @default(programa)
@@ -127,6 +132,9 @@ model Dispatch {
   events      DispatchEvent[]
 
   @@index([programId, businessLine])
+  @@index([programId, projectType])
+  @@index([programId, productionStage])
+  @@index([productionStartAt])
   @@index([programId, project])
   @@index([parentDispatchId])
   @@index([scheduledAt])

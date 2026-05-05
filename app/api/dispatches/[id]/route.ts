@@ -4,6 +4,7 @@ import { parseDateOnly } from "@/lib/dates";
 import { writeAuditLog } from "@/lib/audit";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { dispatchInputSchema } from "@/lib/validators";
+import { cleanLocationValue, normalizeProjectName } from "@/lib/formatting";
 
 export const dynamic = "force-dynamic";
 
@@ -18,12 +19,17 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     data: {
       legacyId: payload.legacyId,
       businessLine: payload.businessLine,
-      project: payload.project,
+      project: payload.project ? normalizeProjectName(payload.project) : undefined,
+      projectType: payload.projectType,
       type: payload.type,
+      description: payload.businessLine === "Constructora" ? null : payload.description,
       detail: payload.detail,
-      tower: payload.tower,
-      core: payload.core,
-      floor: payload.floor,
+      tower: payload.tower === undefined ? undefined : cleanLocationValue(payload.tower, "torre") || null,
+      core: payload.core === undefined ? undefined : cleanLocationValue(payload.core, "nucleo") || null,
+      floor: payload.floor === undefined ? undefined : cleanLocationValue(payload.floor, "piso") || null,
+      fabricationType: payload.fabricationType,
+      productionStage: payload.productionStage,
+      productionStartAt: payload.productionStartAt === undefined ? undefined : payload.productionStartAt ? parseDateOnly(payload.productionStartAt) : null,
       units: payload.units,
       scheduledAt: payload.scheduledAt ? parseDateOnly(payload.scheduledAt) ?? undefined : undefined,
       source: payload.source,

@@ -1,17 +1,25 @@
 export type Role = "admin" | "operador" | "lector";
 export type DispatchState = "pendiente" | "parcial" | "despachado" | "cambio";
 export type BusinessLine = "Constructora" | "Particulares" | "Retail" | "Convenio Marco";
+export type ProjectType = "Edificio" | "Casas" | "Mixto" | "No aplica";
+export type FabricationType = "RTA" | "ARMADO";
+export type ProductionStage = "Corte" | "Enchape" | "Perforado" | "Consolidado" | "Embalaje" | "Armado" | "CD";
 
 export type DispatchRow = {
   id: string;
   legacyId?: number | null;
   businessLine: BusinessLine;
   project: string;
+  projectType: ProjectType;
   type: string;
+  description?: string | null;
   detail?: string | null;
   tower?: string | null;
   core?: string | null;
   floor?: string | null;
+  fabricationType: FabricationType;
+  productionStage: ProductionStage;
+  productionStartAt?: string | null;
   units: number;
   scheduledAt: string;
   source: "programa" | "excel" | "manual";

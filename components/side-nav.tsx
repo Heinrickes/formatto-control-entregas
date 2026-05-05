@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { BarChart3, ClipboardList, Home, Users } from "lucide-react";
+import { AlertTriangle, BarChart3, CalendarDays, ClipboardList, Home, ListChecks, Users } from "lucide-react";
 import type { Role } from "@/lib/client-types";
 
 type PresenceRow = {
@@ -16,6 +16,9 @@ export function SideNav({ role = "lector" }: { role?: Role }) {
   const [onlineUsers, setOnlineUsers] = useState<PresenceRow[]>([]);
   const items = [
     { href: "/", label: "Tablero", icon: Home, show: true },
+    { href: "/despacho", label: "Control de despacho", icon: CalendarDays, show: true },
+    { href: "/urgencias", label: "Control de urgencias", icon: AlertTriangle, show: true },
+    { href: "/tareas", label: "Control de tareas", icon: ListChecks, show: true },
     { href: "/diario", label: "Reportes", icon: BarChart3, show: true },
     { href: "/usuarios", label: "Usuarios", icon: Users, show: role === "admin" },
     { href: "/bitacora", label: "Bitacora", icon: ClipboardList, show: role === "admin" }

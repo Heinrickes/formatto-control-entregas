@@ -4,6 +4,7 @@ import { parseDateOnly } from "@/lib/dates";
 import { writeAuditLog } from "@/lib/audit";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { dispatchInputSchema } from "@/lib/validators";
+import { cleanLocationValue, normalizeProjectName } from "@/lib/formatting";
 
 export const dynamic = "force-dynamic";
 
@@ -30,12 +31,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       programId: params.id,
       legacyId: payload.legacyId ?? null,
       businessLine: payload.businessLine,
-      project: payload.project,
+      project: normalizeProjectName(payload.project),
+      projectType: payload.projectType,
       type: payload.type,
+      description: payload.businessLine === "Constructora" ? null : payload.description ?? null,
       detail: payload.detail ?? null,
-      tower: payload.tower ?? null,
-      core: payload.core ?? null,
-      floor: payload.floor ?? null,
+      tower: cleanLocationValue(payload.tower, "torre") || null,
+      core: cleanLocationValue(payload.core, "nucleo") || null,
+      floor: cleanLocationValue(payload.floor, "piso") || null,
+      fabricationType: payload.fabricationType,
+      productionStage: payload.productionStage,
+      productionStartAt: payload.productionStartAt ? parseDateOnly(payload.productionStartAt) : null,
       units: payload.units,
       scheduledAt: parseDateOnly(payload.scheduledAt) ?? new Date(),
       source: payload.source,

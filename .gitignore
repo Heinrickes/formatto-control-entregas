@@ -9,6 +9,7 @@ dist
 coverage
 *.log
 ~$*.xlsx
+docs/.tmp-*.json
 reports
 supabase/.temp
 supabase/.branches
