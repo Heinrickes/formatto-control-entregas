@@ -13,3 +13,5 @@ docs/.tmp-*.json
 reports
 supabase/.temp
 supabase/.branches
+
+.vercel
