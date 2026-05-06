@@ -40,6 +40,7 @@ type AccessSecretRow = {
   profileEmail: string;
   profileName: string;
   password: string;
+  decryptError?: string | null;
   action: string;
   sentByEmail: string;
   createdAt: string;
@@ -106,11 +107,11 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
 
   const loadAccessSecrets = useCallback(async () => {
     const res = await fetch("/api/users/access-secrets", { headers });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError("No se pudo cargar el historial privado de claves.");
+      setError(data.error ? `No se pudo cargar el historial privado de claves: ${data.error}` : "No se pudo cargar el historial privado de claves.");
       return;
     }
-    const data = await res.json();
     setAccessSecrets(data.secrets ?? []);
   }, [headers]);
 
@@ -361,8 +362,8 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
                     <div>{shortDateTime(item.createdAt)}</div>
                     <div>{item.action.replaceAll("_", " ")}</div>
                     <div className="flex items-center gap-2">
-                      <code className="rounded-none bg-[var(--g1)] px-2 py-1 text-[11px]">{visible ? item.password : "********"}</code>
-                      <button className="thin-button p-2" onClick={() => setVisibleSecretIds(visible ? visibleSecretIds.filter((id) => id !== item.id) : [...visibleSecretIds, item.id])} title={visible ? "Ocultar clave" : "Mostrar clave"}>
+                      <code className="rounded-none bg-[var(--g1)] px-2 py-1 text-[11px]">{item.decryptError ? item.decryptError : visible ? item.password : "********"}</code>
+                      <button className="thin-button p-2" disabled={Boolean(item.decryptError)} onClick={() => setVisibleSecretIds(visible ? visibleSecretIds.filter((id) => id !== item.id) : [...visibleSecretIds, item.id])} title={visible ? "Ocultar clave" : "Mostrar clave"}>
                         {visible ? <EyeOff size={13} /> : <Eye size={13} />}
                       </button>
                     </div>

@@ -53,7 +53,7 @@ async function sendResendMail({
 }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    throw new Error("Falta configurar RESEND_API_KEY en Vercel para enviar correos.");
+    throw new Error("La clave fue guardada, pero falta configurar RESEND_API_KEY en Vercel para enviar correos.");
   }
 
   const payload: Record<string, unknown> = {
