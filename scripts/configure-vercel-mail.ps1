@@ -1,8 +1,3 @@
-param(
-  [string]$ProjectUrl = "https://formatto-control-entregas.vercel.app",
-  [string]$From = "Enrique Arenas D. <enrique.arenas@formatto.cl>"
-)
-
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -30,16 +25,9 @@ if ([string]::IsNullOrWhiteSpace($resendKey)) {
   throw "RESEND_API_KEY no puede quedar vacio."
 }
 
-$accessBytes = New-Object byte[] 32
-[Security.Cryptography.RandomNumberGenerator]::Fill($accessBytes)
-$accessSecret = [Convert]::ToBase64String($accessBytes)
-
 $targets = @("production")
 
 Add-VercelEnv -Name "RESEND_API_KEY" -Value $resendKey.Trim() -Targets $targets
-Add-VercelEnv -Name "FORMATTO_MAIL_FROM" -Value $From -Targets $targets
-Add-VercelEnv -Name "FORMATTO_APP_URL" -Value $ProjectUrl -Targets $targets
-Add-VercelEnv -Name "FORMATTO_ACCESS_SECRET" -Value $accessSecret -Targets $targets
 
 Write-Host ""
-Write-Host "[Formatto] Variables de produccion configuradas. Ejecuta scripts\deploy-vercel.cmd para desplegar produccion."
+Write-Host "[Formatto] RESEND_API_KEY configurada en produccion. Ejecuta scripts\deploy-vercel.cmd para desplegar produccion."
