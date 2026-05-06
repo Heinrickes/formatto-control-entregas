@@ -384,7 +384,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   const headers = useMemo(() => ({ "Content-Type": "application/json", "x-formatto-role": role }), [role]);
 
   const loadPrograms = useCallback(async () => {
-    const res = await fetch("/api/programs", { headers });
+    const res = await fetch("/api/programs", { headers, cache: "no-store" });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       throw new Error(`No se pudo cargar programas (${res.status}). ${detail}`.trim());
@@ -413,7 +413,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
 
   const loadDashboard = useCallback(async (id = programId) => {
     const suffix = id ? `?programId=${id}` : "";
-    const res = await fetch(`/api/dashboard${suffix}`, { headers });
+    const res = await fetch(`/api/dashboard${suffix}`, { headers, cache: "no-store" });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       throw new Error(`No se pudo cargar dashboard (${res.status}). ${detail}`.trim());
@@ -754,6 +754,8 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
         setMessage(error.error ?? "No se pudo guardar la tarea.");
         return;
       }
+      const data = await res.json();
+      if (row && data.dispatch) patchDispatchLocally(data.dispatch);
       setTaskModal(null);
       setMessage(row ? "Tarea editada correctamente." : "Tarea agregada al tablero.");
       await loadPrograms();
