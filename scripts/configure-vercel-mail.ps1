@@ -30,4 +30,8 @@ $targets = @("production")
 Add-VercelEnv -Name "RESEND_API_KEY" -Value $resendKey.Trim() -Targets $targets
 
 Write-Host ""
-Write-Host "[Formatto] RESEND_API_KEY configurada en produccion. Ejecuta scripts\deploy-vercel.cmd para desplegar produccion."
+Write-Host "[Formatto] Verificando variables configuradas en Vercel..."
+npx.cmd vercel env ls
+
+Write-Host ""
+Write-Host "[Formatto] Si RESEND_API_KEY aparece en la lista, ejecuta scripts\deploy-vercel.cmd para desplegar produccion."
