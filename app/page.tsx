@@ -385,7 +385,10 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
 
   const loadPrograms = useCallback(async () => {
     const res = await fetch("/api/programs", { headers });
-    if (!res.ok) throw new Error("No se pudo cargar programas.");
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`No se pudo cargar programas (${res.status}). ${detail}`.trim());
+    }
     const data = await res.json();
     const list = data.programs ?? [];
     setPrograms(list);
@@ -411,7 +414,10 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   const loadDashboard = useCallback(async (id = programId) => {
     const suffix = id ? `?programId=${id}` : "";
     const res = await fetch(`/api/dashboard${suffix}`, { headers });
-    if (!res.ok) throw new Error("No se pudo cargar dashboard.");
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`No se pudo cargar dashboard (${res.status}). ${detail}`.trim());
+    }
     const data = await res.json();
     setPayload(keepPendingProduction(data));
     clearConnectionMessage();
@@ -422,7 +428,14 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   }, [loadPrograms]);
 
   useEffect(() => {
-    loadDashboard().catch(() => setMessage("No se pudo conectar con la API."));
+    loadDashboard().catch((error) => {
+      window.setTimeout(() => {
+        loadDashboard().catch((retryError) => {
+          const detail = retryError instanceof Error ? retryError.message : error instanceof Error ? error.message : "Error desconocido";
+          setMessage(`No se pudo conectar con la API. ${detail}`);
+        });
+      }, 900);
+    });
   }, [loadDashboard]);
 
   useEffect(() => {
