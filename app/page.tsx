@@ -803,7 +803,8 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
         continue;
       }
       const data = await res.json();
-      let nextRow = { ...target, status: data.status } as DispatchRow;
+      let nextRow = (data.dispatch ? data.dispatch : { ...target, status: data.status }) as DispatchRow;
+      if (!nextRow.status && data.status) nextRow = { ...nextRow, status: data.status } as DispatchRow;
       patchDispatchLocally(nextRow);
       saved++;
 

@@ -50,6 +50,20 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       }
     });
 
+    let updatedDispatch = dispatch;
+    if (payload.state === "cambio" && actualAt) {
+      updatedDispatch = await tx.dispatch.update({
+        where: { id: params.id },
+        data: { scheduledAt: actualAt },
+        include: { status: true }
+      });
+    } else {
+      updatedDispatch = await tx.dispatch.findUnique({
+        where: { id: params.id },
+        include: { status: true }
+      }) ?? dispatch;
+    }
+
     let completionTask = null;
     if (payload.state === "parcial") {
       completionTask = await tx.dispatch.findFirst({ where: { parentDispatchId: params.id } });
@@ -90,7 +104,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       }
     }
 
-    return { status, event, completionTask, dispatch };
+    return { status, event, completionTask, dispatch: updatedDispatch };
   });
 
   await writeAuditLog({
@@ -99,7 +113,14 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     entity: "dispatch",
     entityId: params.id,
     summary: `Actualizo ${result.dispatch.project} - ${result.dispatch.type} a ${payload.state}`,
-    details: { state: payload.state, actualAt: payload.actualAt, completionDueAt: payload.completionDueAt, notes: payload.notes ?? null, completionTaskId: result.completionTask?.id ?? null }
+    details: {
+      state: payload.state,
+      actualAt: payload.actualAt,
+      rescheduledAt: payload.state === "cambio" ? payload.actualAt : null,
+      completionDueAt: payload.completionDueAt,
+      notes: payload.notes ?? null,
+      completionTaskId: result.completionTask?.id ?? null
+    }
   });
 
   return Response.json(result);
