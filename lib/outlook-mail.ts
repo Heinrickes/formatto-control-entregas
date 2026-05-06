@@ -58,9 +58,13 @@ async function sendResendMail({
 
   const payload: Record<string, unknown> = {
     from: resendFrom(from),
-    to: recipients,
+    to: process.env.FORMATTO_MAIL_TEST_RECIPIENT?.trim() || recipients,
     subject,
-    html: htmlBody
+    html: process.env.FORMATTO_MAIL_TEST_RECIPIENT?.trim()
+      ? `<div style="font-family: Arial, sans-serif; font-size: 10pt; color: #8b2500; border-left: 4px solid #CE4620; background: #faece7; padding: 10px 12px; margin-bottom: 16px;">
+          Modo prueba Resend: este correo iba dirigido originalmente a ${recipients.join(", ")}.
+        </div>${htmlBody}`
+      : htmlBody
   };
 
   if (attachment) {
@@ -101,7 +105,11 @@ export async function sendOutlookMail({
   from?: string;
   inlineImages?: { path: string; contentId: string }[];
 }) {
-  if (process.env.RESEND_API_KEY || process.env.VERCEL || process.env.NEXT_RUNTIME === "edge") {
+  if (process.env.VERCEL || process.env.NEXT_RUNTIME === "edge") {
+    throw new Error("El envio de correo esta habilitado solo desde localhost con Outlook. Pendiente configurar DNS de formatto.cl o Microsoft Graph para Vercel.");
+  }
+
+  if (process.env.RESEND_API_KEY) {
     await sendResendMail({ recipients, subject, htmlBody, attachment, from });
     return;
   }

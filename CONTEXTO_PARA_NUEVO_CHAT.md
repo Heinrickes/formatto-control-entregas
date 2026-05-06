@@ -344,13 +344,9 @@ Control de Entregas - Formatto - [fecha larga]
 
 Estado actual:
 
-- En localhost el envio puede usar Outlook de escritorio via PowerShell/COM.
-- En Vercel el envio usa Resend via `RESEND_API_KEY`.
-- Mientras `formatto.cl` no este verificado en Resend, el remitente temporal de produccion es:
-
-```text
-Control de Entregas - Formatto <onboarding@resend.dev>
-```
+- En localhost el envio usa Outlook de escritorio via PowerShell/COM.
+- En Vercel el envio de correo queda deshabilitado por ahora.
+- Resend se intento configurar, pero queda al lado porque sin verificar dominio solo permite enviar a la cuenta de prueba.
 
 Se centralizo el envio en:
 
@@ -369,15 +365,15 @@ app/api/daily-report/history/[id]/resend/route.ts
 Mejora aplicada:
 
 - Ahora los errores de Outlook se muestran mas claros.
-- Si Vercel tiene `RESEND_API_KEY`, envia por Resend.
-- Si no existe `RESEND_API_KEY`, localmente intenta Outlook.
+- Localmente intenta Outlook.
+- En Vercel muestra mensaje claro indicando que el envio esta pendiente.
 - Se dejo copia automatica de claves a `enrique.arenas@formatto.cl`.
 - Se agrego historial privado cifrado de claves para admin.
 
 Pendiente recomendado:
 
-- Verificar DNS de `formatto.cl` en Resend para poder enviar desde `enrique.arenas@formatto.cl`.
-- Cuando el dominio este verificado, cambiar `FORMATTO_MAIL_FROM` en Vercel a:
+- Verificar DNS de `formatto.cl` en Resend para poder enviar desde `enrique.arenas@formatto.cl`, o implementar Microsoft Graph.
+- Cuando el dominio este verificado y se retome Resend, cambiar `FORMATTO_MAIL_FROM` en Vercel a:
 
 ```text
 Enrique Arenas D. <enrique.arenas@formatto.cl>
