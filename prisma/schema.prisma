@@ -43,9 +43,26 @@ model Profile {
   reports ReportDelivery[]
   presence UserPresence?
   auditLogs AuditLog[]
+  accessSecrets UserAccessSecret[]
 
   @@index([role])
   @@index([active])
+}
+
+model UserAccessSecret {
+  id             String   @id @default(uuid())
+  profileId      String
+  profile        Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileEmail   String
+  profileName    String
+  passwordCipher String
+  action         String
+  sentByEmail    String
+  createdAt      DateTime @default(now())
+
+  @@index([profileId])
+  @@index([profileEmail])
+  @@index([createdAt])
 }
 
 model UserPresence {

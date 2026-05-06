@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { hashPassword } from "@/lib/passwords";
 import { normalizeEmail, userAreas } from "@/lib/users";
-import { getAppAccessUrl, sendUserAccessMail } from "@/lib/user-access-mail";
+import { getAppAccessUrl, recordUserAccessSecret, sendAdminAccessNotice, sendUserAccessMail } from "@/lib/user-access-mail";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +80,16 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   });
 
   let mailError: string | null = null;
+  const accessAction = payload.sendAccess ? "actualizada_y_enviada" : "actualizada";
+  if (newPassword) {
+    await recordUserAccessSecret({
+      user,
+      password: newPassword,
+      action: accessAction,
+      actor
+    });
+  }
+
   if (payload.sendAccess && newPassword) {
     try {
       await sendUserAccessMail({
@@ -97,6 +107,12 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       });
     } catch (error) {
       mailError = error instanceof Error ? error.message : "No se pudo enviar el correo de acceso.";
+    }
+  } else if (newPassword) {
+    try {
+      await sendAdminAccessNotice({ user, password: newPassword, action: accessAction });
+    } catch (error) {
+      mailError = error instanceof Error ? error.message : "No se pudo enviar el correo de respaldo a admin.";
     }
   }
 

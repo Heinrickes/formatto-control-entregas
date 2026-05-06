@@ -34,11 +34,15 @@ export async function sendOutlookMail({
   subject,
   htmlBody,
   attachment,
+  from,
+  inlineImages,
 }: {
   recipients: string[];
   subject: string;
   htmlBody: string;
   attachment?: string;
+  from?: string;
+  inlineImages?: { path: string; contentId: string }[];
 }) {
   if (process.env.VERCEL || process.env.NEXT_RUNTIME === "edge") {
     throw new Error("El envio por Outlook solo funciona en la app local de Windows, no en Vercel.");
@@ -47,6 +51,15 @@ export async function sendOutlookMail({
   const command = `
 $outlook = New-Object -ComObject Outlook.Application
 $mail = $outlook.CreateItem(0)
+${from ? `$fromAddress = @'
+${from}
+'@
+foreach ($account in $outlook.Session.Accounts) {
+  if ($account.SmtpAddress -eq $fromAddress) {
+    $mail.SendUsingAccount = $account
+    break
+  }
+}` : ""}
 $mail.To = @'
 ${recipients.join(";")}
 '@
@@ -59,6 +72,12 @@ ${htmlBody}
 ${attachment ? `$mail.Attachments.Add(@'
 ${attachment}
 '@) | Out-Null` : ""}
+${(inlineImages ?? []).map((image, index) => `$inlineAttachment${index} = $mail.Attachments.Add(@'
+${image.path}
+'@)
+$inlineAttachment${index}.PropertyAccessor.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F", @'
+${image.contentId}
+'@)`).join("\n")}
 $mail.Send()
 `;
 

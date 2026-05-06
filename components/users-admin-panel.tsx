@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Edit3, KeyRound, Mail, Save, Trash2 } from "lucide-react";
+import { Activity, Edit3, Eye, EyeOff, KeyRound, Mail, Save, Trash2, X } from "lucide-react";
 import type { Role } from "@/lib/client-types";
 
 type UserRow = {
@@ -35,6 +35,16 @@ type PresenceRow = {
   lastActivity?: string | null;
 };
 
+type AccessSecretRow = {
+  id: string;
+  profileEmail: string;
+  profileName: string;
+  password: string;
+  action: string;
+  sentByEmail: string;
+  createdAt: string;
+};
+
 function emptyUserDraft(): UserDraft {
   return {
     email: "",
@@ -66,6 +76,11 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
   const [draft, setDraft] = useState<UserDraft>(emptyUserDraft());
   const [editing, setEditing] = useState<UserRow | null>(null);
   const [createdPassword, setCreatedPassword] = useState("");
+  const [accessModalUser, setAccessModalUser] = useState<UserRow | null>(null);
+  const [accessPassword, setAccessPassword] = useState("");
+  const [accessSecrets, setAccessSecrets] = useState<AccessSecretRow[]>([]);
+  const [showSecrets, setShowSecrets] = useState(false);
+  const [visibleSecretIds, setVisibleSecretIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -89,9 +104,20 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
     setError("");
   }, [headers]);
 
+  const loadAccessSecrets = useCallback(async () => {
+    const res = await fetch("/api/users/access-secrets", { headers });
+    if (!res.ok) {
+      setError("No se pudo cargar el historial privado de claves.");
+      return;
+    }
+    const data = await res.json();
+    setAccessSecrets(data.secrets ?? []);
+  }, [headers]);
+
   useEffect(() => {
     loadUsers().catch(() => setError("No se pudieron cargar los usuarios."));
-  }, [loadUsers]);
+    loadAccessSecrets().catch(() => undefined);
+  }, [loadAccessSecrets, loadUsers]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -154,21 +180,39 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
     await loadUsers();
   }
 
-  async function sendAccess(user: UserRow) {
-    if (!confirm(`Generar una nueva clave y enviarla a ${user.email}?`)) return;
+  function openAccessModal(user: UserRow) {
+    setAccessModalUser(user);
+    setAccessPassword("");
+    setError("");
+    setMessage("");
+  }
+
+  async function sendAccess() {
+    if (!accessModalUser) return;
+    if (accessPassword.trim().length < 4) {
+      setError("Define una clave de al menos 4 caracteres.");
+      return;
+    }
     setBusy(true);
     setError("");
     setMessage("");
     setCreatedPassword("");
-    const res = await fetch(`/api/users/${user.id}/send-access`, { method: "POST", headers });
+    const res = await fetch(`/api/users/${accessModalUser.id}/send-access`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: accessPassword.trim() })
+    });
     setBusy(false);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error ?? "No se pudo enviar el acceso.");
+      setError(data.error ?? "No se pudo cambiar la clave.");
       return;
     }
-    setMessage(`Nueva clave enviada a ${user.email}.`);
+    setMessage(data.mailError ? `Clave actualizada para ${accessModalUser.email}, pero no se pudo enviar el correo: ${data.mailError}` : `Nueva clave enviada a ${accessModalUser.email}, con copia a enrique.arenas@formatto.cl.`);
+    setAccessModalUser(null);
+    setAccessPassword("");
     await loadUsers();
+    await loadAccessSecrets();
   }
 
   async function deactivateUser(user: UserRow) {
@@ -187,6 +231,29 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
 
   return (
     <section className="grid gap-4 lg:grid-cols-[360px_1fr]">
+      {accessModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-md border border-[var(--g2)] bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.06em]">Enviar clave</div>
+                <div className="mt-1 text-[11px] text-[var(--mut)]">{accessModalUser.fullName} - {accessModalUser.email}</div>
+              </div>
+              <button className="thin-button p-2" onClick={() => setAccessModalUser(null)} title="Cerrar"><X size={14} /></button>
+            </div>
+            <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Clave definida por admin</label>
+            <input className="field mb-3" value={accessPassword} onChange={(event) => setAccessPassword(event.target.value)} autoFocus />
+            <div className="mb-4 border-l-4 border-[var(--org)] bg-[#faece7] p-2 text-xs text-[#8b2500]">
+              Se cambiara la clave del usuario, se enviara a su correo y tambien a enrique.arenas@formatto.cl.
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="thin-button" onClick={() => setAccessModalUser(null)}>Cancelar</button>
+              <button className="primary-button" disabled={busy} onClick={sendAccess}><Mail size={14} />Enviar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="border border-[var(--g2)] bg-white p-4">
         <div className="mb-4 border border-[var(--g2)] bg-[var(--g1)] p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.06em]"><Activity size={14} />Usuarios activos</div>
@@ -256,7 +323,7 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
               <div><span className="status-badge status-pendiente">{user.role}</span></div>
               <div>{user.active ? "Activo" : "Inactivo"}</div>
               <div className="flex justify-end gap-2">
-                <button className="thin-button p-2" disabled={busy || !user.active} onClick={() => sendAccess(user)} title="Generar y enviar nueva clave"><KeyRound size={13} /></button>
+                <button className="thin-button p-2" disabled={busy || !user.active} onClick={() => openAccessModal(user)} title="Definir y enviar nueva clave"><KeyRound size={13} /></button>
                 <button className="thin-button p-2" onClick={() => editUser(user)} title="Editar usuario"><Edit3 size={13} /></button>
                 <button className="thin-button p-2" disabled={!user.active} onClick={() => deactivateUser(user)} title="Desactivar usuario"><Trash2 size={13} /></button>
               </div>
@@ -264,6 +331,49 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
           ))}
           {users.length === 0 && <div className="p-4 text-xs text-[var(--mut)]">Sin usuarios creados.</div>}
         </div>
+      </div>
+
+      <div className="border border-[var(--g2)] bg-white lg:col-span-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--g2)] px-4 py-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.06em]">Historial privado de claves</div>
+            <div className="mt-1 text-[10px] text-[var(--mut)]">Visible solo para admin. Ultimos 200 cambios registrados.</div>
+          </div>
+          <button className="thin-button inline-flex items-center gap-2" onClick={() => setShowSecrets(!showSecrets)}>
+            {showSecrets ? <EyeOff size={14} /> : <Eye size={14} />}
+            {showSecrets ? "Ocultar" : "Ver claves"}
+          </button>
+        </div>
+        {showSecrets && (
+          <div className="overflow-x-auto">
+            <div className="min-w-[760px]">
+              <div className="grid grid-cols-[1.1fr_110px_120px_1fr_120px] bg-[var(--g1)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-[var(--mut)]">
+                <div>Usuario</div><div>Fecha</div><div>Accion</div><div>Clave</div><div>Admin</div>
+              </div>
+              {accessSecrets.map((item) => {
+                const visible = visibleSecretIds.includes(item.id);
+                return (
+                  <div key={item.id} className="grid grid-cols-[1.1fr_110px_120px_1fr_120px] items-center border-t border-[var(--g2)] px-3 py-2 text-[11px]">
+                    <div>
+                      <div className="font-semibold">{item.profileName}</div>
+                      <div className="text-[10px] text-[var(--mut)]">{item.profileEmail}</div>
+                    </div>
+                    <div>{shortDateTime(item.createdAt)}</div>
+                    <div>{item.action.replaceAll("_", " ")}</div>
+                    <div className="flex items-center gap-2">
+                      <code className="rounded-none bg-[var(--g1)] px-2 py-1 text-[11px]">{visible ? item.password : "********"}</code>
+                      <button className="thin-button p-2" onClick={() => setVisibleSecretIds(visible ? visibleSecretIds.filter((id) => id !== item.id) : [...visibleSecretIds, item.id])} title={visible ? "Ocultar clave" : "Mostrar clave"}>
+                        {visible ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                    </div>
+                    <div className="truncate">{item.sentByEmail}</div>
+                  </div>
+                );
+              })}
+              {accessSecrets.length === 0 && <div className="p-4 text-xs text-[var(--mut)]">Sin claves registradas todavia.</div>}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

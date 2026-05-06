@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { hashPassword } from "@/lib/passwords";
 import { areaPrefixes, normalizeEmail, userAreas, userRoles } from "@/lib/users";
-import { getAppAccessUrl, sendUserAccessMail } from "@/lib/user-access-mail";
+import { getAppAccessUrl, recordUserAccessSecret, sendAdminAccessNotice, sendUserAccessMail } from "@/lib/user-access-mail";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +104,14 @@ export async function POST(request: NextRequest) {
     details: { email: user.email, role: user.role, area: user.area, active: user.active }
   });
 
+  const accessAction = payload.sendAccess ? "creada_y_enviada" : "creada";
+  await recordUserAccessSecret({
+    user,
+    password,
+    action: accessAction,
+    actor
+  });
+
   let mailError: string | null = null;
   if (payload.sendAccess) {
     try {
@@ -122,6 +130,12 @@ export async function POST(request: NextRequest) {
       });
     } catch (error) {
       mailError = error instanceof Error ? error.message : "No se pudo enviar el correo de acceso.";
+    }
+  } else {
+    try {
+      await sendAdminAccessNotice({ user, password, action: accessAction });
+    } catch (error) {
+      mailError = error instanceof Error ? error.message : "No se pudo enviar el correo de respaldo a admin.";
     }
   }
 
