@@ -18,6 +18,8 @@ function Add-VercelEnv {
 Write-Host ""
 Write-Host "[Formatto] Configuracion de correo Vercel / Resend"
 Write-Host "Necesitas una API key de Resend. No se guardara en archivos locales."
+Write-Host "Remitente temporal en Vercel: Control de Entregas - Formatto <onboarding@resend.dev>"
+Write-Host "Pendiente: verificar DNS de formatto.cl en Resend para usar enrique.arenas@formatto.cl."
 Write-Host ""
 
 $resendKey = Read-Host "Pega RESEND_API_KEY"

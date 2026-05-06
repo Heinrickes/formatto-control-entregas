@@ -344,9 +344,13 @@ Control de Entregas - Formatto - [fecha larga]
 
 Estado actual:
 
-- El envio de mail desde reportes usa Outlook de escritorio via PowerShell/COM.
-- Esto solo funciona localmente en Windows con Outlook instalado, abierto y con sesion activa.
-- En Vercel no funciona este metodo.
+- En localhost el envio puede usar Outlook de escritorio via PowerShell/COM.
+- En Vercel el envio usa Resend via `RESEND_API_KEY`.
+- Mientras `formatto.cl` no este verificado en Resend, el remitente temporal de produccion es:
+
+```text
+Control de Entregas - Formatto <onboarding@resend.dev>
+```
 
 Se centralizo el envio en:
 
@@ -365,11 +369,20 @@ app/api/daily-report/history/[id]/resend/route.ts
 Mejora aplicada:
 
 - Ahora los errores de Outlook se muestran mas claros.
-- Si se intenta enviar desde Vercel, indica que ese metodo no funciona ahi.
+- Si Vercel tiene `RESEND_API_KEY`, envia por Resend.
+- Si no existe `RESEND_API_KEY`, localmente intenta Outlook.
+- Se dejo copia automatica de claves a `enrique.arenas@formatto.cl`.
+- Se agrego historial privado cifrado de claves para admin.
 
 Pendiente recomendado:
 
-- Migrar envio de correo a SMTP, Microsoft Graph o Resend para que funcione igual en local y Vercel.
+- Verificar DNS de `formatto.cl` en Resend para poder enviar desde `enrique.arenas@formatto.cl`.
+- Cuando el dominio este verificado, cambiar `FORMATTO_MAIL_FROM` en Vercel a:
+
+```text
+Enrique Arenas D. <enrique.arenas@formatto.cl>
+```
+- A futuro, evaluar Microsoft Graph si se requiere enviar estrictamente desde el buzon corporativo real.
 
 ## Archivos relevantes
 
