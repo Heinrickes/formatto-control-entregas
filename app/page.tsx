@@ -1230,7 +1230,8 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                         state !== "despachado" && time.value > 0 ? "bg-[#fff7f5]" :
                         state !== "despachado" && time.value === 0 ? "bg-[#fffaf0]" :
                         state === "despachado" ? "opacity-70" : "";
-                      const resultDiff = row.status?.actualAt ? businessDiffDays(row.scheduledAt, row.status.actualAt) : null;
+                      const resultActualAt = state === "despachado" || state === "parcial" ? row.status?.actualAt : null;
+                      const resultDiff = resultActualAt ? businessDiffDays(row.scheduledAt, resultActualAt) : null;
                       return (
                         <div key={row.id} className={`grid grid-cols-[30px_minmax(92px,0.44fr)_190px_82px_82px_74px_minmax(390px,1fr)_34px] items-stretch border-t border-[var(--g2)] px-2 py-2 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
                           <input className="h-3 w-3 accent-[var(--org)]" type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
@@ -1247,7 +1248,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                             <div className={`text-[10px] ${time.tone}`}>{time.label}</div>
                           </button>
                           <button className="text-left" onClick={() => setSelected(row)}>
-                            <div className="font-semibold">{shortDate(row.status?.actualAt)}</div>
+                            <div className="font-semibold">{shortDate(resultActualAt)}</div>
                             <div className="text-[10px] text-[var(--mut)]">
                               {resultDiff === null ? "Sin resultado" : resultDiff === 0 ? "En fecha" : resultDiff > 0 ? `+${resultDiff}d` : `${resultDiff}d`}
                             </div>

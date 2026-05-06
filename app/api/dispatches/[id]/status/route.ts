@@ -14,6 +14,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
   const payload = statusInputSchema.parse(await request.json());
   const actualAt = parseDateOnly(payload.actualAt);
+  const statusActualAt = payload.state === "cambio" ? null : actualAt;
   const completionDueAt = parseDateOnly(payload.completionDueAt) ?? actualAt ?? new Date();
 
   const result = await prisma.$transaction(async (tx) => {
@@ -27,14 +28,14 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       where: { dispatchId: params.id },
       update: {
         state: payload.state,
-        actualAt,
+        actualAt: statusActualAt,
         notes: payload.notes ?? null,
         updatedBy: user?.email ?? role
       },
       create: {
         dispatchId: params.id,
         state: payload.state,
-        actualAt,
+        actualAt: statusActualAt,
         notes: payload.notes ?? null,
         updatedBy: user?.email ?? role
       }
