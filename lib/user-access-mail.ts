@@ -1,5 +1,4 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomInt } from "crypto";
-import path from "path";
 import { prisma } from "@/lib/prisma";
 import type { AuthUser } from "@/lib/auth";
 import { sendOutlookMail } from "@/lib/outlook-mail";
@@ -15,8 +14,7 @@ type AccessUser = {
 const accessAuditRecipient = "enrique.arenas@formatto.cl";
 const accessSender = "enrique.arenas@formatto.cl";
 const defaultAppUrl = "https://formatto-control-entregas.vercel.app";
-const formattoLogoCid = "formatto-logo";
-const formattoLogoPath = path.join(process.cwd(), "public", "formatto-logo.png");
+const formattoLogoUrl = `${defaultAppUrl}/formatto-logo.png`;
 
 function escapeHtml(value: string) {
   return value
@@ -91,7 +89,7 @@ function formattoSignature() {
   <table style="border-collapse: collapse; margin-top: 18px; font-family: Arial, sans-serif; color: #111111;">
     <tr>
       <td style="padding: 0 18px 0 0; vertical-align: middle;">
-        <img src="cid:${formattoLogoCid}" alt="Formatto" style="display:block; width: 230px; height: auto;" />
+        <img src="${formattoLogoUrl}" alt="Formatto" style="display:block; width: 230px; height: auto;" />
       </td>
       <td style="border-left: 2px solid #555555; padding: 0 0 0 16px; vertical-align: middle; font-size: 11pt; line-height: 1.35;">
         <div style="font-size: 13pt; font-weight: 700;">Enrique Arenas D.</div>
@@ -142,7 +140,6 @@ export async function sendUserAccessMail({
     subject,
     htmlBody,
     from: accessSender,
-    inlineImages: [{ path: formattoLogoPath, contentId: formattoLogoCid }],
   });
 }
 
@@ -181,6 +178,5 @@ export async function sendAdminAccessNotice({
     subject,
     htmlBody,
     from: accessSender,
-    inlineImages: [{ path: formattoLogoPath, contentId: formattoLogoCid }],
   });
 }
