@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Edit3, Save, Trash2 } from "lucide-react";
+import { Activity, Edit3, KeyRound, Mail, Save, Trash2 } from "lucide-react";
 import type { Role } from "@/lib/client-types";
 
 type UserRow = {
@@ -22,6 +22,7 @@ type UserDraft = {
   area: string;
   position: string;
   password: string;
+  sendAccess: boolean;
   active: boolean;
 };
 
@@ -42,6 +43,7 @@ function emptyUserDraft(): UserDraft {
     area: "Planificacion y Adquisiciones",
     position: "",
     password: "",
+    sendAccess: false,
     active: true
   };
 }
@@ -108,6 +110,7 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
       area: user.area ?? "Planificacion y Adquisiciones",
       position: user.position ?? "",
       password: "",
+      sendAccess: false,
       active: user.active
     });
   }
@@ -134,6 +137,7 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
         area: draft.area,
         position: draft.position,
         password: draft.password || null,
+        sendAccess: draft.sendAccess,
         active: draft.active
       })
     });
@@ -143,9 +147,27 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
       setError(data.error ?? "No se pudo guardar el usuario. Revisa duplicados y campos obligatorios.");
       return;
     }
-    if (data.initialPassword) setCreatedPassword(data.initialPassword);
-    setMessage(editing ? "Usuario actualizado." : "Usuario creado.");
-    resetForm();
+    setEditing(null);
+    setDraft(emptyUserDraft());
+    if (data.initialPassword && (!draft.sendAccess || data.mailError)) setCreatedPassword(data.initialPassword);
+    setMessage(data.mailError ? `${editing ? "Usuario actualizado" : "Usuario creado"}, pero no se pudo enviar el correo: ${data.mailError}` : editing ? "Usuario actualizado." : data.initialPassword && draft.sendAccess ? "Usuario creado y acceso enviado." : "Usuario creado.");
+    await loadUsers();
+  }
+
+  async function sendAccess(user: UserRow) {
+    if (!confirm(`Generar una nueva clave y enviarla a ${user.email}?`)) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setCreatedPassword("");
+    const res = await fetch(`/api/users/${user.id}/send-access`, { method: "POST", headers });
+    setBusy(false);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error ?? "No se pudo enviar el acceso.");
+      return;
+    }
+    setMessage(`Nueva clave enviada a ${user.email}.`);
     await loadUsers();
   }
 
@@ -201,6 +223,10 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
         </select>
         <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Clave {editing ? "nueva opcional" : "opcional"}</label>
         <input className="field mb-2" value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} placeholder="Vacio: genera por area" />
+        <label className="mb-3 flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={draft.sendAccess} onChange={(event) => setDraft({ ...draft, sendAccess: event.target.checked })} />
+          <span className="inline-flex items-center gap-1"><Mail size={13} />Enviar clave por correo</span>
+        </label>
         <label className="mb-4 flex items-center gap-2 text-xs">
           <input type="checkbox" checked={draft.active} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} />
           Usuario activo
@@ -216,11 +242,11 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
 
       <div className="overflow-x-auto border border-[var(--g2)] bg-white">
         <div className="min-w-[760px]">
-          <div className="grid grid-cols-[1.2fr_1.2fr_120px_120px_90px_120px] bg-[var(--blk)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-white">
+          <div className="grid grid-cols-[1.2fr_1.2fr_120px_110px_90px_150px] bg-[var(--blk)] px-3 py-2 text-[9px] uppercase tracking-[0.06em] text-white">
             <div>Usuario</div><div>Area</div><div>Cargo</div><div>Rol</div><div>Estado</div><div></div>
           </div>
           {users.map((user) => (
-            <div key={user.id} className="grid grid-cols-[1.2fr_1.2fr_120px_120px_90px_120px] items-center border-t border-[var(--g2)] px-3 py-2 text-[11px]">
+            <div key={user.id} className="grid grid-cols-[1.2fr_1.2fr_120px_110px_90px_150px] items-center border-t border-[var(--g2)] px-3 py-2 text-[11px]">
               <div>
                 <div className="font-semibold">{user.fullName}</div>
                 <div className="text-[10px] text-[var(--mut)]">{user.email}</div>
@@ -230,6 +256,7 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
               <div><span className="status-badge status-pendiente">{user.role}</span></div>
               <div>{user.active ? "Activo" : "Inactivo"}</div>
               <div className="flex justify-end gap-2">
+                <button className="thin-button p-2" disabled={busy || !user.active} onClick={() => sendAccess(user)} title="Generar y enviar nueva clave"><KeyRound size={13} /></button>
                 <button className="thin-button p-2" onClick={() => editUser(user)} title="Editar usuario"><Edit3 size={13} /></button>
                 <button className="thin-button p-2" disabled={!user.active} onClick={() => deactivateUser(user)} title="Desactivar usuario"><Trash2 size={13} /></button>
               </div>

@@ -38,7 +38,7 @@ export async function sendOutlookMail({
   recipients: string[];
   subject: string;
   htmlBody: string;
-  attachment: string;
+  attachment?: string;
 }) {
   if (process.env.VERCEL || process.env.NEXT_RUNTIME === "edge") {
     throw new Error("El envio por Outlook solo funciona en la app local de Windows, no en Vercel.");
@@ -56,9 +56,9 @@ ${subject}
 $mail.HTMLBody = @'
 ${htmlBody}
 '@
-$mail.Attachments.Add(@'
+${attachment ? `$mail.Attachments.Add(@'
 ${attachment}
-'@) | Out-Null
+'@) | Out-Null` : ""}
 $mail.Send()
 `;
 

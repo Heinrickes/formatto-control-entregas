@@ -5,6 +5,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { can, forbidden, getRequestRole, getRequestUser } from "@/lib/rbac";
 import { hashPassword } from "@/lib/passwords";
 import { normalizeEmail, userAreas } from "@/lib/users";
+import { getAppAccessUrl, sendUserAccessMail } from "@/lib/user-access-mail";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,8 @@ const userPatchSchema = z.object({
   area: z.enum(userAreas).optional(),
   position: z.string().optional().nullable(),
   password: z.string().optional().nullable(),
-  active: z.boolean().optional()
+  active: z.boolean().optional(),
+  sendAccess: z.boolean().optional()
 });
 
 function toPayload(user: {
@@ -57,8 +59,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (payload.area) data.area = payload.area;
   if (payload.position !== undefined) data.position = payload.position?.trim() || null;
   if (payload.active !== undefined) data.active = payload.active;
-  if (payload.password?.trim()) {
-    data.passwordHash = hashPassword(payload.password.trim());
+  const newPassword = payload.password?.trim();
+  if (newPassword) {
+    data.passwordHash = hashPassword(newPassword);
     data.mustChangePassword = true;
   }
 
@@ -76,7 +79,28 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     details: { ...payload, password: payload.password?.trim() ? "actualizada" : undefined }
   });
 
-  return Response.json({ user: toPayload(user) });
+  let mailError: string | null = null;
+  if (payload.sendAccess && newPassword) {
+    try {
+      await sendUserAccessMail({
+        user,
+        password: newPassword,
+        appUrl: getAppAccessUrl(request)
+      });
+      await writeAuditLog({
+        user: actor,
+        action: "enviar_acceso_usuario",
+        entity: "profile",
+        entityId: user.id,
+        summary: `Envio acceso a ${user.email}`,
+        details: { email: user.email }
+      });
+    } catch (error) {
+      mailError = error instanceof Error ? error.message : "No se pudo enviar el correo de acceso.";
+    }
+  }
+
+  return Response.json({ user: toPayload(user), mailError });
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
