@@ -203,12 +203,12 @@ export function UsersAdminPanel({ headers }: { headers: Record<string, string> }
       body: JSON.stringify({ password: accessPassword.trim() })
     });
     setBusy(false);
-    const data = await res.json().catch(() => ({}));
+    const data = await res.json().catch(async () => ({ error: await res.text().catch(() => "") }));
     if (!res.ok) {
-      setError(data.error ?? "No se pudo cambiar la clave.");
+      setError(data.error ? `No se pudo cambiar la clave: ${data.error}` : "No se pudo cambiar la clave.");
       return;
     }
-    setMessage(data.mailError ? `Clave actualizada para ${accessModalUser.email}, pero no se pudo enviar el correo: ${data.mailError}` : `Nueva clave enviada a ${accessModalUser.email}, con copia a enrique.arenas@formatto.cl.`);
+    setMessage(data.mailError ? `Clave actualizada para ${accessModalUser.email}, pero no se pudo enviar el correo: ${data.mailError}` : data.recordError ? `Clave actualizada para ${accessModalUser.email}, pero no se pudo registrar en historial: ${data.recordError}` : `Nueva clave enviada a ${accessModalUser.email}, con copia a enrique.arenas@formatto.cl.`);
     setAccessModalUser(null);
     setAccessPassword("");
     await loadUsers();

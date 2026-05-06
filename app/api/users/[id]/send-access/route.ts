@@ -57,12 +57,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
   });
 
-  await recordUserAccessSecret({
-    user,
-    password,
-    action: "actualizada_y_enviada",
-    actor
-  });
+  let recordError: string | null = null;
+  try {
+    await recordUserAccessSecret({
+      user,
+      password,
+      action: "actualizada_y_enviada",
+      actor
+    });
+  } catch (error) {
+    recordError = error instanceof Error ? error.message : "No se pudo registrar la clave en el historial privado.";
+  }
 
   let mailError: string | null = null;
   try {
@@ -81,8 +86,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     entity: "profile",
     entityId: user.id,
     summary: mailError ? `Genero nueva clave para ${user.email}, pero fallo el correo` : `Genero y envio nueva clave a ${user.email}`,
-    details: { email: user.email, mailError }
+    details: { email: user.email, mailError, recordError }
   });
 
-  return Response.json({ user: toPayload(user), mailError });
+  return Response.json({ user: toPayload(user), mailError, recordError });
 }
