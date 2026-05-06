@@ -86,14 +86,14 @@ export function getAppAccessUrl(request: Request) {
 
 function formattoSignature() {
   return `
-  <table style="border-collapse: collapse; margin-top: 18px; font-family: Arial, sans-serif; color: #111111;">
+  <table width="520" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-top: 18px; font-family: Arial, sans-serif; color: #111111; width: 520px; max-width: 520px;">
     <tr>
-      <td style="padding: 0 18px 0 0; vertical-align: middle;">
-        <img src="${formattoLogoUrl}" alt="Formatto" style="display:block; width: 230px; height: auto;" />
+      <td width="180" style="padding: 0 14px 0 0; vertical-align: middle; width: 180px;">
+        <img src="${formattoLogoUrl}" alt="Formatto" width="170" style="display:block; width: 170px; max-width: 170px; height: auto; border: 0; outline: none; text-decoration: none;" />
       </td>
-      <td style="border-left: 2px solid #555555; padding: 0 0 0 16px; vertical-align: middle; font-size: 11pt; line-height: 1.35;">
-        <div style="font-size: 13pt; font-weight: 700;">Enrique Arenas D.</div>
-        <div style="font-size: 12pt; font-weight: 700; margin-bottom: 16px;">Jefe de Planificacion</div>
+      <td width="320" style="border-left: 1px solid #555555; padding: 0 0 0 14px; vertical-align: middle; width: 320px; font-size: 10pt; line-height: 1.3;">
+        <div style="font-size: 11.5pt; font-weight: 700;">Enrique Arenas D.</div>
+        <div style="font-size: 10.5pt; font-weight: 700; margin-bottom: 10px;">Jefe de Planificacion</div>
         <div>(+562) 2587 9900</div>
         <div>Longitudinal Sur KM 43.5, Parcela 251 - Paine - Stgo</div>
         <div><a href="https://www.formatto.cl" style="color:#111111; text-decoration:none;">www.formatto.cl</a></div>
