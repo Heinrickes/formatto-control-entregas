@@ -14,6 +14,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (!can(role, "admin")) return forbidden("Solo admin puede editar despachos");
 
   const payload = dispatchInputSchema.partial().parse(await request.json());
+  const current = payload.originalScheduledAt !== undefined
+    ? await prisma.dispatch.findUnique({ where: { id: params.id }, select: { originalScheduledAt: true } })
+    : null;
   const dispatch = await prisma.dispatch.update({
     where: { id: params.id },
     data: {
@@ -31,6 +34,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       productionStage: payload.productionStage,
       productionStartAt: payload.productionStartAt === undefined ? undefined : payload.productionStartAt ? parseDateOnly(payload.productionStartAt) : null,
       units: payload.units,
+      originalScheduledAt: payload.originalScheduledAt === undefined ? undefined : payload.originalScheduledAt ? parseDateOnly(payload.originalScheduledAt) ?? undefined : undefined,
       scheduledAt: payload.scheduledAt ? parseDateOnly(payload.scheduledAt) ?? undefined : undefined,
       source: payload.source,
       sortOrder: payload.sortOrder
@@ -44,7 +48,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     entity: "dispatch",
     entityId: params.id,
     summary: `Edito tarea ${dispatch.project} - ${dispatch.type}`,
-    details: payload
+    details: {
+      ...payload,
+      originalScheduledAtBefore: current?.originalScheduledAt ?? null,
+      originalScheduledAtAfter: payload.originalScheduledAt === undefined ? undefined : dispatch.originalScheduledAt
+    }
   });
 
   return Response.json({ dispatch });

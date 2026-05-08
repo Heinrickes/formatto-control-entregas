@@ -31,20 +31,24 @@ export async function POST(request: NextRequest) {
         endsAt: parseDateOnly(payload.endsAt),
         active: payload.active ?? false,
         dispatches: {
-          create: payload.dispatches.map((dispatch, index) => ({
-            legacyId: dispatch.legacyId ?? null,
-            project: dispatch.project,
-            type: dispatch.type,
-            detail: dispatch.detail ?? null,
-            tower: dispatch.tower ?? null,
-            core: dispatch.core ?? null,
-            floor: dispatch.floor ?? null,
-            units: dispatch.units,
-            scheduledAt: parseDateOnly(dispatch.scheduledAt) ?? new Date(),
-            source: dispatch.source,
-            sortOrder: dispatch.sortOrder || index,
-            status: { create: { state: "pendiente" } }
-          }))
+          create: payload.dispatches.map((dispatch, index) => {
+            const scheduledAt = parseDateOnly(dispatch.scheduledAt) ?? new Date();
+            return {
+              legacyId: dispatch.legacyId ?? null,
+              project: dispatch.project,
+              type: dispatch.type,
+              detail: dispatch.detail ?? null,
+              tower: dispatch.tower ?? null,
+              core: dispatch.core ?? null,
+              floor: dispatch.floor ?? null,
+              units: dispatch.units,
+              originalScheduledAt: parseDateOnly(dispatch.originalScheduledAt) ?? scheduledAt,
+              scheduledAt,
+              source: dispatch.source,
+              sortOrder: dispatch.sortOrder || index,
+              status: { create: { state: "pendiente" } }
+            };
+          })
         }
       },
       include: programInclude

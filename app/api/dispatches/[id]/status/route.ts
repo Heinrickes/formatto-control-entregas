@@ -78,10 +78,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
             detail: `Completar entrega parcial${dispatch.detail ? ` - ${dispatch.detail}` : ""}`,
             tower: dispatch.tower,
             core: dispatch.core,
-            floor: dispatch.floor,
-            units: dispatch.units,
-            scheduledAt: completionDueAt,
-            source: "manual",
+              floor: dispatch.floor,
+              units: dispatch.units,
+              originalScheduledAt: completionDueAt,
+              scheduledAt: completionDueAt,
+              source: "manual",
             sortOrder: dispatch.sortOrder + 1
           }
         });

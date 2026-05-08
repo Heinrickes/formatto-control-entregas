@@ -21,6 +21,7 @@ export type DispatchRow = {
   productionStage: ProductionStage;
   productionStartAt?: string | null;
   units: number;
+  originalScheduledAt: string;
   scheduledAt: string;
   source: "programa" | "excel" | "manual";
   sortOrder: number;

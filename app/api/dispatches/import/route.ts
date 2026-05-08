@@ -21,26 +21,30 @@ export async function POST(request: NextRequest) {
       endsAt: parseDateOnly(payload.endsAt),
       active: payload.active ?? true,
       dispatches: {
-        create: payload.dispatches.map((dispatch, index) => ({
-          legacyId: dispatch.legacyId ?? null,
-          businessLine: dispatch.businessLine,
-          project: normalizeProjectName(dispatch.project),
-          projectType: dispatch.projectType,
-          type: dispatch.type,
-          description: dispatch.businessLine === "Constructora" ? null : dispatch.description ?? null,
-          detail: dispatch.detail ?? null,
-          tower: cleanLocationValue(dispatch.tower, "torre") || null,
-          core: cleanLocationValue(dispatch.core, "nucleo") || null,
-          floor: cleanLocationValue(dispatch.floor, "piso") || null,
-          fabricationType: dispatch.fabricationType,
-          productionStage: dispatch.productionStage,
-          productionStartAt: dispatch.productionStartAt ? parseDateOnly(dispatch.productionStartAt) : null,
-          units: dispatch.units,
-          scheduledAt: parseDateOnly(dispatch.scheduledAt) ?? new Date(),
-          source: dispatch.source,
-          sortOrder: index,
-          status: { create: { state: "pendiente" } }
-        }))
+        create: payload.dispatches.map((dispatch, index) => {
+          const scheduledAt = parseDateOnly(dispatch.scheduledAt) ?? new Date();
+          return {
+            legacyId: dispatch.legacyId ?? null,
+            businessLine: dispatch.businessLine,
+            project: normalizeProjectName(dispatch.project),
+            projectType: dispatch.projectType,
+            type: dispatch.type,
+            description: dispatch.businessLine === "Constructora" ? null : dispatch.description ?? null,
+            detail: dispatch.detail ?? null,
+            tower: cleanLocationValue(dispatch.tower, "torre") || null,
+            core: cleanLocationValue(dispatch.core, "nucleo") || null,
+            floor: cleanLocationValue(dispatch.floor, "piso") || null,
+            fabricationType: dispatch.fabricationType,
+            productionStage: dispatch.productionStage,
+            productionStartAt: dispatch.productionStartAt ? parseDateOnly(dispatch.productionStartAt) : null,
+            units: dispatch.units,
+            originalScheduledAt: parseDateOnly(dispatch.originalScheduledAt) ?? scheduledAt,
+            scheduledAt,
+            source: dispatch.source,
+            sortOrder: index,
+            status: { create: { state: "pendiente" } }
+          };
+        })
       }
     },
     include: { dispatches: { include: { status: true } } }

@@ -36,6 +36,7 @@ type TaskDraft = {
   productionStage: string;
   productionStartAt: string;
   units: string;
+  originalScheduledAt: string;
   scheduledAt: string;
 };
 
@@ -100,6 +101,7 @@ const emptyTask = (): TaskDraft => ({
   productionStage: "Plan",
   productionStartAt: "",
   units: "0",
+  originalScheduledAt: todayOnly(),
   scheduledAt: todayOnly()
 });
 
@@ -119,7 +121,7 @@ function todayOnly() {
 
 function dateOnly(value?: string | null) {
   if (!value) return "";
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const date = new Date(value);
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: APP_TIME_ZONE,
@@ -238,6 +240,7 @@ function toTaskDraft(row: DispatchRow): TaskDraft {
     productionStage: row.productionStage ?? "Plan",
     productionStartAt: dateOnly(row.productionStartAt),
     units: String(row.units ?? 0),
+    originalScheduledAt: dateOnly(row.originalScheduledAt || row.scheduledAt),
     scheduledAt: dateOnly(row.scheduledAt)
   };
 }
@@ -759,6 +762,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
         productionStage: draft.productionStage,
         productionStartAt: draft.productionStartAt || null,
         units: Number(draft.units) || 0,
+        originalScheduledAt: draft.originalScheduledAt || draft.scheduledAt,
         scheduledAt: draft.scheduledAt,
         source: "manual"
       });
@@ -1006,6 +1010,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
         productionStage,
         productionStartAt: productionStartAt ? spreadsheetDateOnly(productionStartAt) || null : null,
         units,
+        originalScheduledAt: date,
         scheduledAt: date,
         source: "excel"
       });
@@ -1267,7 +1272,9 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                         state !== "despachado" && time.value === 0 ? "bg-[#fffaf0]" :
                         state === "despachado" ? "opacity-70" : "";
                       const resultActualAt = state === "despachado" || state === "parcial" ? row.status?.actualAt : null;
-                      const resultDiff = resultActualAt ? businessDiffDays(row.scheduledAt, resultActualAt) : null;
+                      const originalScheduledAt = row.originalScheduledAt || row.scheduledAt;
+                      const resultDiff = resultActualAt ? businessDiffDays(originalScheduledAt, resultActualAt) : null;
+                      const hasReprogramming = dateOnly(originalScheduledAt) !== dateOnly(row.scheduledAt);
                       return (
                         <div key={row.id} className={`grid grid-cols-[30px_minmax(92px,0.44fr)_190px_82px_82px_74px_minmax(390px,1fr)_34px] items-stretch border-t border-[var(--g2)] px-2 py-2 text-left text-[11px] leading-tight hover:bg-[var(--g1)] ${rowTone}`}>
                           <input className="h-3 w-3 accent-[var(--org)]" type="checkbox" checked={checked.includes(row.id)} onChange={() => toggleChecked(row.id)} aria-label={`Seleccionar ${row.project}`} />
@@ -1282,6 +1289,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
                           <button className="text-left" onClick={() => setSelected(row)}>
                             <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
                             <div className={`text-[10px] ${time.tone}`}>{time.label}</div>
+                            {hasReprogramming && <div className="text-[9px] text-[var(--mut)]">Orig. {shortDate(originalScheduledAt)}</div>}
                           </button>
                           <button className="text-left" onClick={() => setSelected(row)}>
                             <div className="font-semibold">{shortDate(resultActualAt)}</div>
@@ -2345,8 +2353,15 @@ function TaskModal({ row, role, busy, onClose, onSave }: {
               <input className="field" type="number" min="0" value={draft.units} disabled={readonly} onChange={(event) => setField("units", event.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Fecha programada</label>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Fecha vigente</label>
               <input className="field" type="date" value={draft.scheduledAt} disabled={readonly} onChange={(event) => setField("scheduledAt", event.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">Fecha original congelada</label>
+              <input className="field" type="date" value={draft.originalScheduledAt} disabled={readonly} onChange={(event) => setField("originalScheduledAt", event.target.value)} />
+            </div>
+            <div className="border-l-4 border-[var(--org)] bg-[var(--g1)] p-3 text-[11px] text-[var(--mut)]">
+              La fecha original solo debe corregirse por admin. Los cambios quedan en bitacora.
             </div>
           </div>
         </div>
@@ -2378,7 +2393,10 @@ function StatusModal({ row, role, busy, productionSaving = false, message = "", 
   const [actualAt, setActualAt] = useState(dateOnly(row.status?.actualAt));
   const [completionDueAt, setCompletionDueAt] = useState(todayOnly());
   const [notes, setNotes] = useState(row.status?.notes ?? "");
-  const diff = businessDiffDays(row.scheduledAt, actualAt);
+  const originalScheduledAt = row.originalScheduledAt || row.scheduledAt;
+  const diff = businessDiffDays(originalScheduledAt, actualAt);
+  const currentDiff = businessDiffDays(row.scheduledAt, actualAt);
+  const hasReprogramming = dateOnly(originalScheduledAt) !== dateOnly(row.scheduledAt);
   const readonly = role === "lector";
   const showDispatchSummary = state === "despachado" && Boolean(actualAt) && diff !== null;
   const currentTime = timeState(row);
@@ -2406,7 +2424,8 @@ function StatusModal({ row, role, busy, productionSaving = false, message = "", 
             <div className="bg-[var(--g1)] p-3"><b>Fabricación</b><br />{row.fabricationType ?? "RTA"}</div>
             <div className="bg-[var(--g1)] p-3"><b>Ingreso producción</b><br />{shortDate(row.productionStartAt)}</div>
             <div className="bg-[var(--g1)] p-3"><b>Tiempo producción</b><br /><span className={productionLeadTime.tone}>{productionLeadTime.label}</span></div>
-            <div className="bg-[var(--g1)] p-3"><b>Fecha programada</b><br />{shortDate(row.scheduledAt)}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Fecha vigente</b><br />{shortDate(row.scheduledAt)}</div>
+            <div className="bg-[var(--g1)] p-3"><b>Fecha original</b><br />{shortDate(originalScheduledAt)}</div>
             <div className="bg-[var(--g1)] p-3"><b>Estado tiempo</b><br /><span className={currentTime.tone}>{currentTime.label}</span></div>
             <div className="bg-[var(--g1)] p-3"><b>Ultima actualizacion</b><br />{shortDate(row.status?.updatedAt)}</div>
             {(row.businessLine ?? "Constructora") === "Constructora" && (
@@ -2441,7 +2460,7 @@ function StatusModal({ row, role, busy, productionSaving = false, message = "", 
             <>
               <label className="block text-[10px] uppercase tracking-[0.06em] text-[var(--mut)]">{state === "cambio" ? "Nueva fecha propuesta" : state === "parcial" ? "Fecha de entrega parcial" : "Fecha real de despacho"}</label>
               <input className="field" type="date" value={actualAt} disabled={readonly} onChange={(event) => setActualAt(event.target.value)} />
-              {diff !== null && <div className="border-l-4 border-[var(--org)] bg-[var(--g1)] p-3 text-xs"><b>{diff === 0 ? "En fecha" : diff > 0 ? `${diff} dias de atraso` : `${Math.abs(diff)} dias de adelanto`}</b></div>}
+              {diff !== null && <div className="border-l-4 border-[var(--org)] bg-[var(--g1)] p-3 text-xs"><b>{diff === 0 ? "En fecha original" : diff > 0 ? `${diff} dias de atraso vs original` : `${Math.abs(diff)} dias de adelanto vs original`}</b>{hasReprogramming && currentDiff !== null ? <div className="mt-1 text-[11px] text-[var(--mut)]">Contra fecha vigente: {currentDiff === 0 ? "en fecha" : currentDiff > 0 ? `${currentDiff} dias atraso` : `${Math.abs(currentDiff)} dias adelanto`}</div> : null}</div>}
             </>
           )}
           {state === "parcial" && (
@@ -2456,8 +2475,9 @@ function StatusModal({ row, role, busy, productionSaving = false, message = "", 
               <div className="border-b border-[var(--g2)] bg-[var(--blk)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.06em] text-white">Resumen de despacho</div>
               <div className="grid grid-cols-2 gap-2 p-3 text-[11px]">
                 <div className="bg-[var(--g1)] p-3">
-                  <div className="text-[9px] uppercase text-[var(--mut)]">Programado</div>
-                  <div className="font-semibold">{shortDate(row.scheduledAt)}</div>
+                  <div className="text-[9px] uppercase text-[var(--mut)]">Original</div>
+                  <div className="font-semibold">{shortDate(originalScheduledAt)}</div>
+                  {hasReprogramming && <div className="text-[10px] text-[var(--mut)]">Vig. {shortDate(row.scheduledAt)}</div>}
                 </div>
                 <div className="bg-[var(--g1)] p-3">
                   <div className="text-[9px] uppercase text-[var(--mut)]">Real</div>

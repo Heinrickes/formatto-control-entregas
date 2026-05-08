@@ -26,6 +26,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   if (!can(role, "admin")) return forbidden("Solo admin puede crear despachos");
 
   const payload = dispatchInputSchema.parse(await request.json());
+  const scheduledAt = parseDateOnly(payload.scheduledAt) ?? new Date();
   const dispatch = await prisma.dispatch.create({
     data: {
       programId: params.id,
@@ -43,7 +44,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       productionStage: payload.productionStage,
       productionStartAt: payload.productionStartAt ? parseDateOnly(payload.productionStartAt) : null,
       units: payload.units,
-      scheduledAt: parseDateOnly(payload.scheduledAt) ?? new Date(),
+      originalScheduledAt: parseDateOnly(payload.originalScheduledAt) ?? scheduledAt,
+      scheduledAt,
       source: payload.source,
       sortOrder: payload.sortOrder,
       status: { create: { state: "pendiente" } }

@@ -42,6 +42,7 @@ export const dispatchInputSchema = z.object({
   productionStage: productionStageSchema.default("Plan"),
   productionStartAt: z.string().optional().nullable(),
   units: z.coerce.number().int().min(0).default(0),
+  originalScheduledAt: z.string().optional().nullable(),
   scheduledAt: z.string().min(10),
   source: z.enum(["programa", "excel", "manual"]).default("programa"),
   sortOrder: z.coerce.number().int().default(0)

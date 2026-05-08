@@ -69,6 +69,7 @@ export async function PATCH(request: NextRequest) {
               core: dispatch.core,
               floor: dispatch.floor,
               units: dispatch.units,
+              originalScheduledAt: completionDueAt,
               scheduledAt: completionDueAt,
               source: "manual",
               sortOrder: dispatch.sortOrder + 1

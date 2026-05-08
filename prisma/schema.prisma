@@ -137,6 +137,7 @@ model Dispatch {
   productionStage String       @default("Plan")
   productionStartAt DateTime?
   units       Int            @default(0)
+  originalScheduledAt DateTime
   scheduledAt DateTime
   source      DispatchSource @default(programa)
   sortOrder   Int            @default(0)

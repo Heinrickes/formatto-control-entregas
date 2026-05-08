@@ -5,15 +5,21 @@ export function parseDateOnly(value?: string | null) {
   if (!value) return null;
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day, 12));
 }
 
 export function toDateOnly(date?: Date | string | null) {
   if (!date) return "";
   const value = typeof date === "string" ? new Date(date) : date;
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
   return `${year}-${month}-${day}`;
 }
 
