@@ -362,6 +362,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
   const [projectSort, setProjectSort] = useState<"prioridad" | "atraso" | "cumplimiento" | "nombre">("prioridad");
   const [timelineOffset, setTimelineOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [importStatus, setImportStatus] = useState<{ active: boolean; total: number; processed: number; created: number; updated: number; skipped: number; error?: string }>({ active: false, total: 0, processed: 0, created: 0, updated: 0, skipped: 0 });
   const [productionPendingIds, setProductionPendingIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
@@ -397,6 +398,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       [...list].sort((a: ProgramSummary, b: ProgramSummary) => (b._count?.dispatches ?? 0) - (a._count?.dispatches ?? 0))[0];
     if (active && !programId) setProgramId(active.id);
     clearConnectionMessage();
+    return active?.id as string | undefined;
   }, [clearConnectionMessage, headers, programId]);
 
   const keepPendingProduction = useCallback((nextPayload: DashboardPayload) => {
@@ -419,9 +421,25 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
       throw new Error(`No se pudo cargar dashboard (${res.status}). ${detail}`.trim());
     }
     const data = await res.json();
-    setPayload(keepPendingProduction(data));
+    const nextPayload = keepPendingProduction(data);
+    setPayload(nextPayload);
+    setSelected((current) => current ? nextPayload.dispatches.find((row) => row.id === current.id) ?? current : current);
     clearConnectionMessage();
   }, [clearConnectionMessage, headers, keepPendingProduction, programId]);
+
+  const refreshAllData = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const nextProgramId = await loadPrograms();
+      await loadDashboard(nextProgramId ?? programId);
+      setMessage("Tablero actualizado.");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Error desconocido";
+      setMessage(`No se pudo actualizar el tablero. ${detail}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadDashboard, loadPrograms, programId]);
 
   useEffect(() => {
     loadPrograms().catch(() => setMessage("No se pudo cargar el tablero. Revisa Supabase y DATABASE_URL."));
@@ -1060,7 +1078,7 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
           <Link className="thin-button inline-flex items-center justify-center p-2 no-underline" href="/diario" title="Reportes"><BarChart3 size={16} /></Link>
           {role === "admin" && <Link className="thin-button inline-flex items-center justify-center p-2 no-underline" href="/usuarios" title="Usuarios activos y roles"><Users size={16} /></Link>}
           {role === "admin" && <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => setAuditModal(true)} title="Bitacora de cambios"><ClipboardList size={16} /></button>}
-          <button className="thin-button inline-flex items-center justify-center p-2" onClick={() => loadDashboard()} title="Actualizar tablero"><RefreshCw size={16} /></button>
+          <button className="thin-button inline-flex items-center justify-center p-2" disabled={refreshing} onClick={refreshAllData} title="Actualizar tablero"><RefreshCw className={refreshing ? "animate-spin" : ""} size={16} /></button>
           <button className="thin-button inline-flex items-center gap-2" onClick={logout}><LogOut size={14} />{session.name}</button>
         </div>
       </header>
