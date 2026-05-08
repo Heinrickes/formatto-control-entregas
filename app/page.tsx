@@ -792,51 +792,69 @@ export function DashboardApp({ defaultView = "dashboard" }: { defaultView?: Dash
     let failed = 0;
     let productionWarning = "";
 
-    for (const target of targetRows) {
-      const res = await fetch(`/api/dispatches/${target.id}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ state, actualAt: actualAt || null, completionDueAt: completionDueAt || null, notes })
-      });
-      if (!res.ok) {
-        failed++;
-        continue;
-      }
-      const data = await res.json();
-      let nextRow = (data.dispatch ? data.dispatch : { ...target, status: data.status }) as DispatchRow;
-      if (!nextRow.status && data.status) nextRow = { ...nextRow, status: data.status } as DispatchRow;
-      patchDispatchLocally(nextRow);
-      saved++;
-
-      if (completeProduction && target.productionStage !== "CD") {
-        const productionRow = { ...nextRow, productionStage: "CD" } as DispatchRow;
-        patchDispatchLocally(productionRow);
-        const productionRes = await fetch(`/api/dispatches/${target.id}/production`, {
+    try {
+      for (const target of targetRows) {
+        const res = await fetch(`/api/dispatches/${target.id}/status`, {
           method: "PATCH",
           headers,
-          body: JSON.stringify({
-            fabricationType: target.fabricationType ?? "RTA",
-            productionStage: "CD",
-            productionStartAt: target.productionStartAt ? dateOnly(target.productionStartAt) : null
-          })
+          body: JSON.stringify({ state, actualAt: actualAt || null, completionDueAt: completionDueAt || null, notes })
         });
-        if (!productionRes.ok) {
-          productionWarning = "Algunos estados se guardaron, pero no se pudo marcar toda la produccion en CD.";
+        if (!res.ok) {
+          failed++;
           continue;
         }
-        const productionData = await productionRes.json();
-        nextRow = productionData.dispatch;
+        const data = await res.json();
+        const fallbackStatus = {
+          ...(target.status ?? {}),
+          state,
+          actualAt: state === "cambio" ? null : actualAt || null,
+          notes: notes || null,
+          updatedAt: new Date().toISOString()
+        };
+        let nextRow = (data.dispatch ? data.dispatch : { ...target, status: data.status ?? fallbackStatus }) as DispatchRow;
+        nextRow = { ...nextRow, status: data.status ?? nextRow.status ?? fallbackStatus } as DispatchRow;
         patchDispatchLocally(nextRow);
+        saved++;
+
+        if (completeProduction && target.productionStage !== "CD") {
+          const productionRow = { ...nextRow, productionStage: "CD" } as DispatchRow;
+          patchDispatchLocally(productionRow);
+          const productionRes = await fetch(`/api/dispatches/${target.id}/production`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+              fabricationType: target.fabricationType ?? "RTA",
+              productionStage: "CD",
+              productionStartAt: target.productionStartAt ? dateOnly(target.productionStartAt) : null
+            })
+          });
+          if (!productionRes.ok) {
+            productionWarning = "Algunos estados se guardaron, pero no se pudo marcar toda la produccion en CD.";
+            continue;
+          }
+          const productionData = await productionRes.json();
+          nextRow = productionData.dispatch;
+          patchDispatchLocally(nextRow);
+        }
       }
+    } catch {
+      failed++;
     }
 
-    await loadDashboard();
-    setBusy(false);
+    let refreshWarning = "";
+    try {
+      await loadDashboard();
+    } catch {
+      refreshWarning = " Guardado aplicado, pero no se pudo refrescar el tablero automaticamente.";
+    } finally {
+      setBusy(false);
+    }
+
     if (failed) {
-      setMessage(`${saved} guardadas. ${failed} no se pudieron guardar.`);
+      setMessage(`${saved} guardadas. ${failed} no se pudieron guardar.${refreshWarning}`);
       return;
     }
-    setMessage(productionWarning || (targetRows.length > 1 ? `${saved} tareas guardadas correctamente${completeProduction ? " con produccion en CD" : ""}.` : completeProduction ? "Guardado correctamente. Produccion marcada en CD." : "Guardado correctamente."));
+    setMessage(`${productionWarning || (targetRows.length > 1 ? `${saved} tareas guardadas correctamente${completeProduction ? " con produccion en CD" : ""}.` : completeProduction ? "Guardado correctamente. Produccion marcada en CD." : "Guardado correctamente.")}${refreshWarning}`);
   }
 
   async function saveProduction(row: DispatchRow, productionStage: string, fabricationType = row.fabricationType ?? "RTA", productionStartAt = row.productionStartAt ? dateOnly(row.productionStartAt) : "") {
